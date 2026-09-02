@@ -1,5 +1,7 @@
 # KiwiFi
 
+**Сайт:** https://kiwi-fi.vercel.app · **Android:** [последний APK](https://github.com/Qiwichka/KiwiFi/releases/latest)
+
 Музыкальный плеер: свои треки с диска, облако и SoundCloud. Веб-приложение,
 позже — Android-клиент.
 
