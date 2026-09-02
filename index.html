@@ -32,9 +32,16 @@
             Без подписки, без чужих рекомендаций и без рекламы посреди песни.
         </p>
         <div class="cta">
-            <a class="btn btn--go" href="app.html">
-                <svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>
-                Открыть плеер
+            <!-- Кружок и стрелка лежат абсолютно и разъезжаются при наведении;
+                 .abtn__slot — их место в потоке, иначе кнопка не знала бы,
+                 какой ей быть ширины. Геометрию считает arrowbtn.js. -->
+            <a class="abtn" href="app.html">
+                <span class="abtn__label">Открыть плеер</span>
+                <span class="abtn__slot" aria-hidden="true"></span>
+                <span class="abtn__badge" aria-hidden="true"></span>
+                <span class="abtn__icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M5 12h14M19 12l-6-6M19 12l-6 6"/></svg>
+                </span>
             </a>
             <a class="btn btn--ghost" href="https://github.com/Qiwichka/KiwiFi" rel="noopener">
                 <svg viewBox="0 0 24 24"><path d="M12 3l7 4v10l-7 4-7-4V7z"/><path d="M12 11v10M5 7l7 4 7-4"/></svg>

@@ -146,3 +146,47 @@ button,a{font:inherit;color:inherit}
 @media (prefers-reduced-motion:reduce){
   *{animation-duration:.01ms !important;transition-duration:.01ms !important}
 }
+
+/* ── Кнопка с разъезжающимся кружком ─────────────────────────────── */
+/* Перенос ArrowRevealButton (Originkit). Геометрию считает
+   assets/js/arrowbtn.js — размеры зависят от длины надписи, зашить их
+   в стили нельзя. */
+.abtn{
+  position:relative;display:inline-flex;align-items:center;
+  /* Надпись первой в разметке — для читалок с экрана. Кружок уезжает
+     влево только визуально. */
+  flex-direction:row-reverse;justify-content:space-between;
+  gap:20px;padding:13px 30px 13px 13px;
+  border-radius:999px;border:2px solid rgba(255,255,255,.92);
+  background:#fff;color:var(--ink);
+  text-decoration:none;white-space:nowrap;user-select:none;cursor:pointer;
+  overflow:hidden;
+  box-shadow:0 10px 30px rgba(20,34,62,.3);
+  transition:transform var(--abtn-dur,460ms) var(--abtn-ease,ease);
+}
+.abtn__label{
+  position:relative;z-index:1;font-size:15.5px;font-weight:650;
+  transition:transform var(--abtn-dur,460ms) var(--abtn-ease,ease);
+}
+/* Пустая распорка: сам кружок лежит абсолютно и места не занимает,
+   поэтому без неё кнопка не знала бы, какой ей быть ширины. */
+.abtn__slot{flex:none;width:44px;height:44px}
+.abtn__badge{
+  position:absolute;z-index:2;width:0;height:0;border-radius:50%;
+  background:var(--accent);transform-origin:center;pointer-events:none;
+  transition:transform var(--abtn-dur,460ms) var(--abtn-ease,ease);
+}
+.abtn__icon{
+  position:absolute;z-index:3;width:21px;height:21px;
+  margin-left:-10.5px;margin-top:-10.5px;
+  display:flex;align-items:center;justify-content:center;
+  color:#fff;pointer-events:none;
+  transition:transform var(--abtn-dur,460ms) var(--abtn-ease,ease);
+}
+.abtn__icon svg{width:21px;height:21px;fill:none;stroke:currentColor;
+  stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.abtn:focus-visible{outline:3px solid rgba(255,255,255,.65);outline-offset:3px}
+
+@media (prefers-reduced-motion:reduce){
+  .abtn,.abtn__label,.abtn__badge,.abtn__icon{transition-duration:.01ms !important}
+}

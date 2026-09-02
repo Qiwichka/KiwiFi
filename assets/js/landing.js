@@ -12,8 +12,11 @@
  */
 
 import { CloudSky, SKY_PRESET } from "./sky.js"
+import { initArrowButtons } from "./arrowbtn.js"
 
 const FPS_CAP = 30
+
+initArrowButtons()
 
 const canvas = document.getElementById("sky")
 const sky = new CloudSky(canvas, SKY_PRESET)
