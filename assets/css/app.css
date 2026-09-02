@@ -251,7 +251,10 @@ button{background:none;border:0;cursor:pointer;padding:0}
   border:1.5px dashed rgba(240,238,230,.16);border-radius:var(--r-lg);
   transition:border-color .2s,background .2s;
 }
-.empty__icon{width:56px;height:56px;margin:0 auto 18px;opacity:.35;
+/* Размер обязан стоять на самом svg, а не только на обёртке: svg без
+   собственных width/height разворачивается в 300x150 и разносит блок. */
+.empty__icon{display:block;width:56px;height:56px;margin:0 auto 18px;opacity:.35}
+.empty__icon svg{width:56px;height:56px;display:block;
   fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
 .empty__title{font-size:19px;font-weight:600;margin:0 0 6px}
 .empty__text{color:var(--muted);margin:0 0 22px;font-size:14px}
