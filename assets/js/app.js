@@ -30,6 +30,7 @@
 
 import { Background, SCENES } from "./bg.js"
 import { Engine } from "./player/engine.js"
+import * as audius from "./sources/audius.js"
 
 kiwiStep("модуль запущен")
 
@@ -104,11 +105,13 @@ const I = {
     cloud:  '<svg viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 000-8 6 6 0 00-11.6 1.5A3.5 3.5 0 006.5 18"/></svg>',
     sc:     '<svg viewBox="0 0 24 24"><path d="M3 16v-4M6 17v-6M9 18V9M12 18V7M15 18h4a3 3 0 000-6 5 5 0 00-7-4"/></svg>',
     trash:  '<svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>',
-    list:   '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h4"/></svg>'
+    list:   '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h4"/></svg>',
+    wave:   '<svg viewBox="0 0 24 24"><path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 11v2M21 12h1"/></svg>',
+    dl:     '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>'
 }
 
-const SRC_ICON = { local: I.disk, cloud: I.cloud, soundcloud: I.sc }
-const SRC_NAME = { local: "С диска", cloud: "Из облака", soundcloud: "SoundCloud" }
+const SRC_ICON = { local: I.disk, cloud: I.cloud, soundcloud: I.sc, audius: I.wave }
+const SRC_NAME = { local: "С диска", cloud: "Из облака", soundcloud: "SoundCloud", audius: "Audius" }
 
 /* ── Состояние ────────────────────────────────────────────────────── */
 
@@ -127,6 +130,12 @@ const state = {
    каким адаптером играть трек: свои файлы обычным <audio>, SoundCloud
    через виджет. Интерфейс про адаптеры не знает вовсе. */
 const engine = new Engine()
+
+/* Ссылку на поток Audius выдаёт узел сети, и получать её надо
+   непосредственно перед воспроизведением: узел может смениться. */
+engine.resolve = async (t) => {
+    if (t.source === "audius") await audius.attachUrl(t)
+}
 
 let bg = null
 
@@ -251,6 +260,10 @@ function trackRow(t, i, list, from) {
                 el("div", { class: "row__artist", text: t.artist }))),
         el("div", { class: "row__album", text: t.album || "—" }),
         el("div", { class: "row__end" },
+            t.source === "audius" ? el("button", {
+                class: "iconbtn iconbtn--row", title: "Скачать", "data-stop": true,
+                onclick: (e) => { e.stopPropagation(); downloadTrack(t) }
+            }, svg(I.dl)) : null,
             el("button", {
                 class: "iconbtn iconbtn--row", title: "В плейлист", "data-stop": true,
                 onclick: (e) => { e.stopPropagation(); menuAddTo(e.currentTarget, t) }
@@ -321,13 +334,20 @@ function viewHome() {
 /* ── Экран: Поиск ────────────────────────────────────────────────── */
 
 function viewSearch() {
-    const q = state.query.trim().toLowerCase()
+    const raw = state.query.trim()
+    const q = raw.toLowerCase()
     const box = el("div", { class: "page" })
 
-    if (!q) {
+    if (!raw) {
         box.appendChild(el("h1", { class: "page__title", text: "Поиск" }))
         box.appendChild(el("p", { class: "page__sub",
-            text: "Ищет по названию, исполнителю и альбому в твоей библиотеке." }))
+            text: "Ищет в твоей библиотеке и на Audius — там открытый каталог, играет и скачивается прямо отсюда." }))
+
+        box.appendChild(el("h2", { class: "sec__t sec__t--solo", text: "Сейчас слушают на Audius" }))
+        const slot = el("div")
+        box.appendChild(slot)
+        fillOnline(slot, () => audius.trending(18), "Audius")
+
         box.appendChild(scBox())
         return box
     }
@@ -335,14 +355,65 @@ function viewSearch() {
     const hit = state.tracks.filter((t) =>
         (t.title + " " + t.artist + " " + (t.album || "")).toLowerCase().includes(q))
 
-    box.appendChild(el("h1", { class: "page__title", text: "Найдено: " + nTracks(hit.length) }))
-    if (!hit.length) {
-        box.appendChild(el("p", { class: "page__sub", text: "Ничего не подошло под «" + state.query + "»" }))
-        return box
+    box.appendChild(el("h1", { class: "page__title", text: "Поиск: " + raw }))
+
+    if (hit.length) {
+        box.appendChild(el("h2", { class: "sec__t sec__t--solo", text: "В библиотеке — " + nTracks(hit.length) }))
+        box.appendChild(trackTable(hit, "Поиск: " + raw))
     }
-    box.appendChild(toolbar(hit, "Поиск: " + state.query))
-    box.appendChild(trackTable(hit, "Поиск: " + state.query))
+
+    box.appendChild(el("h2", { class: "sec__t sec__t--solo", text: "На Audius" }))
+    const slot = el("div")
+    box.appendChild(slot)
+    fillOnline(slot, () => audius.search(raw, 25), "Audius: " + raw)
+
+    box.appendChild(scBox())
     return box
+}
+
+/* Онлайн-раздел заполняется асинхронно: сеть может думать секунду, а
+   держать из-за неё весь экран пустым незачем. Пока ждём — строка о
+   загрузке, упало — понятная причина, а не тишина. */
+async function fillOnline(slot, fetcher, from) {
+    slot.appendChild(el("div", { class: "loading", text: "Ищу…" }))
+    try {
+        const list = await fetcher()
+        slot.innerHTML = ""
+        if (!list.length) {
+            slot.appendChild(el("p", { class: "page__sub", text: "Ничего не нашлось" }))
+            return
+        }
+        slot.appendChild(toolbar(list, from))
+        slot.appendChild(trackTable(list, from))
+    } catch (e) {
+        slot.innerHTML = ""
+        slot.appendChild(el("div", { class: "note" },
+            el("span", { class: "note__ico", html: I.wave }),
+            el("div", null,
+                el("div", { class: "note__t", text: "Audius не отвечает" }),
+                el("div", { class: "note__d", text: e.message || "Проверь подключение к интернету" }))))
+    }
+}
+
+/* Скачивание. Поток отдаётся с открытым CORS, поэтому файл забирается
+   прямо в браузере: ни прокси, ни расширений. Сохранение — обычная
+   ссылка с download, как если бы пользователь щёлкнул по файлу сам. */
+async function downloadTrack(t) {
+    toast("Качаю: " + t.title)
+    try {
+        const { blob, filename } = await audius.download(t)
+        const url = URL.createObjectURL(blob)
+        const a = el("a", { href: url, download: filename })
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        // Отзыв не сразу: браузеру нужен ещё миг, чтобы начать сохранение
+        setTimeout(() => URL.revokeObjectURL(url), 20000)
+        toast("Готово: " + filename)
+        kiwiStep("скачан трек audius")
+    } catch (e) {
+        toast("Не удалось скачать: " + (e.message || "ошибка"), true)
+    }
 }
 
 /* Вставка ссылки на SoundCloud.
@@ -896,12 +967,19 @@ $("np-art").addEventListener("click", () => {
 })
 
 const q = $("q")
+/* Задержка перед запросом. Без неё каждая набранная буква улетала бы в
+   сеть, и ответы возвращались бы вперемешку: на «lo» позже, чем на
+   «lofi», затирая более свежий результат. */
+let qTimer = 0
 q.addEventListener("input", () => {
-    state.query = q.value
     $("q-clear").hidden = !q.value
-    const box = $("view")
-    box.innerHTML = ""
-    box.appendChild(viewSearch())
+    clearTimeout(qTimer)
+    qTimer = setTimeout(() => {
+        state.query = q.value
+        const box = $("view")
+        box.innerHTML = ""
+        box.appendChild(viewSearch())
+    }, 350)
 })
 $("q-clear").addEventListener("click", () => {
     q.value = ""; state.query = ""; $("q-clear").hidden = true

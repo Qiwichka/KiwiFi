@@ -24,10 +24,6 @@ export class HtmlAudioAdapter extends Adapter {
         super()
         const a = new Audio()
         a.preload = "metadata"
-        // Ставится ДО первого .src и навсегда: иначе createMediaElementSource
-        // отдаст «отравленный» немой узел на облачных ссылках. Проявляется
-        // как «локально играет, из облака тишина» и съедает полдня.
-        a.crossOrigin = "anonymous"
         this.el = a
         this._url = null
 
@@ -68,6 +64,25 @@ export class HtmlAudioAdapter extends Adapter {
     async load(track) {
         this._set({ status: "loading", position: 0, duration: 0, error: null })
         this._revoke()
+
+        /* crossOrigin ставится ПОТРЕКОВО и обязательно ДО .src.
+         *
+         * Он нужен только чтобы потом АНАЛИЗИРОВАТЬ звук — визуализатор и
+         * кроссфейд через Web Audio. Само воспроизведение чужого файла
+         * его не требует: медиа-элементу можно играть cross-origin без
+         * всякого CORS, как картинке.
+         *
+         * И ставить его всем подряд нельзя. Поток Audius уезжает
+         * редиректом на узел сети, а редирект CORS-заголовков не несёт —
+         * с этим атрибутом браузер отказывается открывать файл с ошибкой
+         * «формат не поддерживается», хотя формат обычный mp3. Проверено:
+         * без атрибута тот же трек грузится, с ним — код 4.
+         *
+         * Поэтому флаг несёт сам трек: у своих файлов и облака CORS есть,
+         * у Audius нет. Цена — визуализатор для Audius пока не заведётся.
+         */
+        if (track.cors) this.el.crossOrigin = "anonymous"
+        else this.el.removeAttribute("crossorigin")
 
         if (track.file) {
             this._url = URL.createObjectURL(track.file)

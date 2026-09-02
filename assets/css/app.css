@@ -569,3 +569,16 @@ body.is-dragging .empty{border-color:var(--accent);background:var(--accent-dim)}
 .sc__input:focus{border-color:var(--accent);background:rgba(240,238,230,.1)}
 .sc__input::placeholder{color:var(--faint)}
 .sc__hint{margin-top:14px;padding-top:14px;border-top:1px solid var(--glass-line)}
+
+/* Ожидание сети в онлайн-разделах */
+.loading{
+  padding:22px 12px;color:var(--muted);font-size:14px;
+  display:flex;align-items:center;gap:10px;
+}
+.loading::before{
+  content:"";width:15px;height:15px;flex:none;border-radius:50%;
+  border:2px solid rgba(240,238,230,.2);border-top-color:var(--accent);
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.loading::before{animation:none}}
