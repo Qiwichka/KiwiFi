@@ -107,6 +107,12 @@
                 <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
                 Добавить файлы
             </button>
+            <!-- Выбор папки есть только там, где браузер умеет запоминать
+                 ссылки на неё. Кнопка прячется кодом, если не умеет. -->
+            <button class="btn btn--ghost" data-folder id="btn-folder" hidden style="width:100%;margin-top:6px">
+                <svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3z"/></svg>
+                Указать папку
+            </button>
         </div>
     </aside>
 

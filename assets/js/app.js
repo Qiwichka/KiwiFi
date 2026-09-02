@@ -6,8 +6,11 @@
  * экранов разная и меняется часто, держать пять готовых кусков в HTML
  * значит обречь их на рассинхрон.
  *
- * Данные пока живут в памяти: ни IndexedDB, ни облака. Это фаза 1 — после
- * перезагрузки список пуст, и так задумано. Хранилище придёт в фазе 3.
+ * Библиотека, плейлисты и настройки переживают перезагрузку: треки и
+ * плейлисты лежат в IndexedDB (idb.js), мелочи вроде громкости и позиции
+ * последнего трека — в localStorage (prefs.js), потому что нужны ДО первой
+ * отрисовки. Работа с файлами на диске — в sources/local.js, там же
+ * объяснено, почему уровней два.
  *
  * Три решения соблюдаются уже сейчас, потому что переделывать их потом
  * дороже, чем заложить сразу:
@@ -32,6 +35,9 @@ import { Background, SCENES } from "./bg.js"
 import { Engine } from "./player/engine.js"
 import * as audius from "./sources/audius.js"
 import { Viz } from "./viz.js"
+import * as idb from "./idb.js"
+import * as prefs from "./prefs.js"
+import * as local from "./sources/local.js"
 
 kiwiStep("модуль запущен")
 
@@ -116,12 +122,16 @@ const SRC_NAME = { local: "С диска", cloud: "Из облака", soundclou
 
 /* ── Состояние ────────────────────────────────────────────────────── */
 
+const P = prefs.load()
+
 const state = {
     tracks: [],        // вся библиотека
     playlists: [],     // { id, title, scene, keys: [ключи треков] }
+    folder: null,      // сохранённая папка с музыкой (уровень 1)
+    needPermission: false,   // доступ к файлам надо переспросить кликом
 
-    view: "home",
-    arg: null,
+    view: P.view || "home",
+    arg: P.arg || null,
     query: "",
     hist: [],          // для стрелок назад-вперёд
     fwd: []
@@ -135,12 +145,45 @@ const engine = new Engine()
 /* Ссылку на поток Audius выдаёт узел сети, и получать её надо
    непосредственно перед воспроизведением: узел может смениться. */
 engine.resolve = async (t) => {
-    if (t.source === "audius") await audius.attachUrl(t)
+    if (t.source === "audius") { await audius.attachUrl(t); return }
+    if (t.source === "local") {
+        /* Файл достаём заново перед каждым воспроизведением: его могли
+           переименовать, удалить или отобрать доступ. Узнать об этом
+           здесь честнее, чем получить тишину. */
+        t.file = await local.fileFor(t)
+    }
 }
 
 let bg = null
 
 const byKey = (k) => state.tracks.find((t) => t.key === k)
+
+/* ── Сохранение ───────────────────────────────────────────────────── */
+
+/* Поля file и url в базу не идут: первое это живая ссылка на открытый
+   файл, второе — подписанный адрес потока, который протухает. Оба
+   восстанавливаются на месте, перед воспроизведением. */
+function forDisk(t) {
+    const { file, url, ...rest } = t
+    return rest
+}
+
+let saveTimer = 0
+function persistLater() {
+    clearTimeout(saveTimer)
+    // Пачкой и с задержкой: при добавлении сотни файлов иначе будет сто
+    // отдельных походов на диск.
+    saveTimer = setTimeout(async () => {
+        try {
+            await idb.bulkPut("tracks", state.tracks.map((t) => [t.key, forDisk(t)]))
+            await idb.put("playlists", "all", state.playlists)
+            if (state.folder) await idb.put("playlists", "folder", state.folder)
+        } catch (e) {
+            toast("Не удалось сохранить библиотеку", true)
+            kiwiStep("ошибка записи в базу: " + e.message)
+        }
+    }, 500)
+}
 const curTrack = () => engine.track
 const plTracks = (p) => p.keys.map(byKey).filter(Boolean)
 
@@ -153,6 +196,7 @@ function go(view, arg = null, push = true) {
     }
     state.view = view
     state.arg = arg
+    prefs.save({ view, arg })
     render()
 }
 
@@ -191,6 +235,7 @@ function render() {
         playlists: viewPlaylists, playlist: viewPlaylist, queue: viewQueue
     }[state.view] || viewHome
 
+    if (state.needPermission) v.appendChild(permBanner())
     v.appendChild(draw())
 
     if (state.view === "search") requestAnimationFrame(() => $("q").focus())
@@ -198,6 +243,19 @@ function render() {
     // Фон плейлиста. На остальных экранах — набор по умолчанию.
     const pl = state.view === "playlist" ? state.playlists.find((p) => p.id === state.arg) : null
     bg && bg.setScene(pl ? pl.scene : "meadow")
+}
+
+/* Браузер не отдаёт доступ к файлам молча после перезагрузки: его надо
+   переспросить, и обязательно по клику. Поэтому плашка, а не тихая
+   попытка при запуске — иначе библиотека выглядела бы рабочей, но не
+   играла. */
+function permBanner() {
+    return el("div", { class: "perm" },
+        el("div", { class: "perm__body" },
+            el("div", { class: "note__t", text: "Нужен доступ к твоим файлам" }),
+            el("div", { class: "note__d",
+                text: "После перезагрузки браузер спрашивает разрешение заново. Один раз нажми — и вся библиотека вернётся." })),
+        el("button", { class: "btn btn--play", onclick: askPermission }, "Разрешить"))
 }
 
 /* ── Общие куски ─────────────────────────────────────────────────── */
@@ -652,6 +710,7 @@ function newPlaylist() {
         keys: []
     }
     state.playlists.push(p)
+    persistLater()
     toast("Плейлист создан — название можно менять прямо в заголовке")
     go("playlist", p.id)
 }
@@ -673,6 +732,7 @@ function menuAddTo(anchor, track) {
                 onclick: () => {
                     if (p.keys.includes(track.key)) { toast("Уже в «" + p.title + "»"); return }
                     p.keys.push(track.key)
+                    persistLater()
                     toast("Добавлено в «" + p.title + "»")
                     if (state.view === "playlist" && state.arg === p.id) render()
                     m.remove()
@@ -713,6 +773,18 @@ const playAt = (i) => engine.playAt(i)
 
 function toggle() {
     if (!engine.queue.length) {
+        /* Продолжаем с того места, где закрыли. Автозапуск при загрузке
+           страницы браузер запрещает, поэтому перемотка делается здесь —
+           на первом же нажатии, то есть по жесту пользователя. */
+        if (state.resumeTrack) {
+            const t = state.resumeTrack
+            state.resumeTrack = null
+            const list = state.tracks.includes(t) ? state.tracks : [t]
+            playList(list, list.indexOf(t), P.lastFrom || "Библиотека").then(() => {
+                if (P.lastPos > 1) engine.seek(P.lastPos)
+            })
+            return
+        }
         if (state.tracks.length) playList(state.tracks, 0, "Библиотека")
         else pickFiles()
         return
@@ -735,8 +807,117 @@ function setMediaSession(t) {
 
 /* ── Добавление файлов ───────────────────────────────────────────── */
 
-function pickFiles() { $("file-input").click() }
+/* ── Добавление файлов ───────────────────────────────────────────── */
 
+/* Два пути, и они правда разные.
+ *
+ * Где есть File System Access API (Chrome и Edge на компьютере) — берём
+ * ХЭНДЛЫ: ссылки на файлы, которые переживают перезагрузку. Файл остаётся
+ * на диске один, копий не делается.
+ *
+ * Где его нет (Android Chrome, Firefox, Safari) — приходят обычные File,
+ * чьи ссылки умирают вместе со страницей. Чтобы библиотека сохранилась,
+ * файлы надо КОПИРОВАТЬ в память приложения. Это второй раз занятое место,
+ * поэтому спрашиваем, а не делаем молча. */
+
+async function pickFiles() {
+    if (local.hasHandles) {
+        try {
+            const entries = await local.pickFiles()
+            if (entries && entries.length) await addEntries(entries)
+        } catch (e) {
+            // Пользователь закрыл окно выбора — это не ошибка
+            if (e && e.name !== "AbortError") toast("Не удалось открыть файлы", true)
+        }
+        return
+    }
+    $("file-input").click()
+}
+
+async function pickFolder() {
+    if (!local.hasFolder) {
+        toast("Выбор папки работает в Chrome и Edge на компьютере", true)
+        return
+    }
+    try {
+        const res = await local.pickFolder()
+        if (!res) return
+        state.folder = res.dir
+        if (!res.files.length) { toast("В папке не нашлось музыки", true); return }
+        await addEntries(res.files, "Папка добавлена")
+    } catch (e) {
+        if (e && e.name !== "AbortError") toast("Не удалось открыть папку", true)
+    }
+}
+
+/** Добавить записи вида { file, handle }. */
+async function addEntries(entries, okText) {
+    const fresh = []
+    for (const { file, handle } of entries) {
+        const meta = fromFilename(file.name)
+        // Один и тот же файл дважды не добавляем: имя плюс размер
+        // отличают надёжнее, чем одно имя.
+        const sig = file.name + ":" + file.size
+        if (state.tracks.some((t) => t.sig === sig)) continue
+        fresh.push({
+            key: "loc:" + crypto.randomUUID(),
+            source: "local",
+            kind: handle ? "local-handle" : "local-blob",
+            handle: handle || null,
+            sig,
+            file,
+            title: meta.title, artist: meta.artist,
+            album: "", durationS: 0, artwork: null
+        })
+    }
+
+    if (!fresh.length) { toast("Эти треки уже добавлены"); return }
+
+    /* Решение принимается ПОФАЙЛОВО, а не по возможностям браузера.
+       Даже там, где File System Access API есть, файл может прийти без
+       хэндла — например, через обычный <input>. Смотреть надо на то, что
+       пришло, иначе трек помечается копией, копия не делается, и после
+       перезагрузки он молча не играет.
+
+       Спрашивать через confirm() нельзя: системное окно блокирует всё
+       окно браузера, а посреди добавления музыки это ещё и некрасиво.
+       Поэтому копируем сразу, а честно сообщаем после — сколько файлов
+       и сколько места заняли. Занятое видно в любой момент, а вернуть
+       место можно, убрав треки. */
+    const noHandle = fresh.filter((t) => !t.handle)
+    let copied = 0
+    if (noHandle.length) {
+        try {
+            await local.storeBlobs(noHandle.map((t) => [t.key, t.file]))
+            copied = local.totalBytes(noHandle.map((t) => t.file))
+        } catch (e) {
+            toast("Не хватило места — эти треки останутся до перезагрузки", true)
+            for (const t of noHandle) t.kind = "local-temp"
+        }
+    }
+    if (fresh.some((t) => t.handle)) await idb.persist()
+
+    state.tracks.push(...fresh)
+
+    // Если открыт плейлист — кладём новое сразу в него
+    if (state.view === "playlist") {
+        const pl = state.playlists.find((x) => x.id === state.arg)
+        if (pl) for (const t of fresh) pl.keys.push(t.key)
+    }
+
+    render()
+    readDurations()
+    persistLater()
+    if (okText) toast(okText)
+    else if (copied) {
+        toast("Добавлено: " + fresh.length + " · скопировано в память " + local.fmtBytes(copied))
+    } else {
+        toast("Добавлено: " + fresh.length)
+    }
+    kiwiStep("добавлено файлов: " + fresh.length)
+}
+
+/** Обычный <input> — путь для браузеров без File System Access API. */
 function addFiles(fileList) {
     const files = Array.from(fileList).filter((f) => AUDIO_RE.test(f.name) || f.type.startsWith("audio/"))
     const skipped = fileList.length - files.length
@@ -744,27 +925,7 @@ function addFiles(fileList) {
         toast(skipped ? "Это не аудиофайлы" : "Файлы не выбраны", true)
         return
     }
-
-    for (const file of files) {
-        const meta = fromFilename(file.name)
-        state.tracks.push({
-            key: "loc:" + crypto.randomUUID(),
-            file, title: meta.title, artist: meta.artist,
-            album: "", durationS: 0, source: "local"
-        })
-    }
-
-    // Если открыт плейлист, положим новое сразу в него — иначе после
-    // «добавить треки» из плейлиста файлы уезжали бы неизвестно куда.
-    if (state.view === "playlist") {
-        const p = state.playlists.find((x) => x.id === state.arg)
-        if (p) for (const t of state.tracks.slice(-files.length)) p.keys.push(t.key)
-    }
-
-    render()
-    readDurations()
-    toast("Добавлено: " + files.length + (skipped ? " (пропущено " + skipped + ")" : ""))
-    kiwiStep("добавлено файлов: " + files.length)
+    addEntries(files.map((file) => ({ file, handle: null })))
 }
 
 /* Длительность читается отдельным элементом, а не основным: если занять
@@ -773,10 +934,12 @@ function addFiles(fileList) {
 function readDurations() {
     const probe = new Audio()
     probe.preload = "metadata"
-    const queue = state.tracks.filter((t) => !t.durationS)
+    // Только у тех, где файл уже на руках: у восстановленных из базы
+    // длительность сохранена, лезть на диск незачем.
+    const queue = state.tracks.filter((t) => !t.durationS && t.file)
     let i = 0
     const step = () => {
-        if (i >= queue.length) { paintDurations(); return }
+        if (i >= queue.length) { paintDurations(); persistLater(); return }
         const t = queue[i++]
         const url = URL.createObjectURL(t.file)
         const done = (ok) => {
@@ -842,7 +1005,7 @@ const seekBar = makeBar($("seek"), $("seek-fill"), $("seek-knob"),
     () => { const d = engine.state.duration; return d ? engine.state.position / d : 0 })
 
 const volBar = makeBar($("vol"), $("vol-fill"), $("vol-knob"),
-    (v) => { engine.setVolume(v); paintMute() },
+    (v) => { engine.setVolume(v); paintMute(); prefs.save({ volume: v, muted: false }) },
     () => engine.volume)
 
 volBar.paint(engine.volume)
@@ -931,6 +1094,7 @@ $("file-input").addEventListener("change", (e) => {
 })
 
 for (const b of document.querySelectorAll("[data-add]")) b.addEventListener("click", pickFiles)
+for (const b of document.querySelectorAll("[data-folder]")) b.addEventListener("click", pickFolder)
 for (const b of document.querySelectorAll("[data-go]")) {
     b.addEventListener("click", () => go(b.dataset.go))
 }
@@ -946,11 +1110,13 @@ $("btn-prev").addEventListener("click", () => engine.prev())
 $("btn-shuffle").addEventListener("click", () => {
     engine.setShuffle(!engine.shuffle)
     $("btn-shuffle").classList.toggle("is-on", engine.shuffle)
+    prefs.save({ shuffle: engine.shuffle })
     toast(engine.shuffle ? "Вперемешку" : "По порядку")
 })
 
 $("btn-repeat").addEventListener("click", () => {
     const mode = engine.cycleRepeat()
+    prefs.save({ repeat: mode })
     const b = $("btn-repeat")
     b.classList.toggle("is-on", mode !== "off")
     b.title = { off: "Повтор выключен", all: "Повторять список", one: "Повторять трек" }[mode]
@@ -959,6 +1125,7 @@ $("btn-repeat").addEventListener("click", () => {
 
 $("btn-mute").addEventListener("click", () => {
     engine.setMuted(!engine.muted)
+    prefs.save({ muted: engine.muted })
     volBar.paint(engine.muted ? 0 : engine.volume)
     paintMute()
 })
@@ -1000,11 +1167,38 @@ window.addEventListener("dragenter", (e) => {
 window.addEventListener("dragleave", () => {
     if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("is-dragging") }
 })
-window.addEventListener("drop", (e) => {
+window.addEventListener("drop", async (e) => {
     e.preventDefault()
     dragDepth = 0
     document.body.classList.remove("is-dragging")
-    if (e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files)
+    if (!e.dataTransfer) return
+
+    /* У брошенных файлов в Chrome и Edge можно попросить хэндл — тогда
+       трек переживёт перезагрузку без копирования. Список items надо
+       разобрать СРАЗУ: после первого await он опустеет. */
+    const items = [...e.dataTransfer.items || []]
+    const files = [...e.dataTransfer.files || []]
+    if (!files.length) return
+
+    /* Запросы на хэндлы отправляем СИНХРОННО, все разом, и только потом
+       ждём ответы: объекты items живут до конца обработчика события, и
+       после первого await обращаться к ним уже нельзя. */
+    const pending = items.map((it) =>
+        it.kind === "file" && it.getAsFileSystemHandle
+            ? it.getAsFileSystemHandle().catch(() => null)
+            : Promise.resolve(null))
+    const handles = await Promise.all(pending)
+
+    const entries = []
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        if (!AUDIO_RE.test(file.name) && !file.type.startsWith("audio/")) continue
+        const h = handles[i]
+        entries.push({ file, handle: h && h.kind === "file" ? h : null })
+    }
+
+    if (entries.length) addEntries(entries)
+    else toast("Это не аудиофайлы", true)
 })
 
 /* ── Клавиши ─────────────────────────────────────────────────────── */
@@ -1021,7 +1215,146 @@ window.addEventListener("keydown", (e) => {
 
 bg = new Background({
     wrap: $("bg"), sky: $("bg-sky"), grass: $("bg-grass"), reflect: $("bg-reflect")
-}, "on")
+}, P.bgMode || "on")
+
+/* Настройки прошлого сеанса. Читаются синхронно, поэтому применяются до
+   первой отрисовки и ничего не мигает. */
+engine.setVolume(P.volume)
+if (P.muted) engine.setMuted(true)
+engine.setShuffle(P.shuffle)
+engine.repeat = P.repeat || "off"
+volBar.paint(P.muted ? 0 : P.volume)
+$("btn-shuffle").classList.toggle("is-on", !!P.shuffle)
+$("btn-repeat").classList.toggle("is-on", engine.repeat !== "off")
+
+/* Позиция играющего трека пишется не чаще раза в пять секунд: чаще
+   незачем, а localStorage синхронный и дёргать его каждый кадр вредно. */
+let posSaved = 0
+engine.addEventListener("time", (e) => {
+    const now = performance.now()
+    if (now - posSaved < 5000) return
+    posSaved = now
+    const t = engine.track
+    if (t) prefs.save({ lastKey: t.key, lastPos: e.detail.position, lastFrom: engine.from })
+})
+engine.addEventListener("track", () => {
+    const t = engine.track
+    if (t) prefs.save({ lastKey: t.key, lastPos: 0, lastFrom: engine.from })
+})
+
+/* ── Восстановление ──────────────────────────────────────────────── */
+
+async function restore() {
+    try {
+        const saved = await idb.all("tracks")
+        if (saved && saved.length) {
+            state.tracks = saved.filter((t) => t && t.key)
+            // Временные треки прошлого сеанса не пережили перезагрузку по
+            // определению: файла за ними больше нет, играть нечего.
+            state.tracks = state.tracks.filter((t) => t.kind !== "local-temp")
+        }
+
+        const pls = await idb.get("playlists", "all")
+        if (Array.isArray(pls)) state.playlists = pls
+
+        state.folder = (await idb.get("playlists", "folder")) || null
+
+        /* Пересканируем папку: добавленные в неё файлы появятся сами,
+           удалённые исчезнут. Ровно то, чего ждёшь от плеера. */
+        if (state.folder) {
+            const found = await local.rescan(state.folder)
+            if (found) mergeFolder(found)
+            else state.needPermission = true
+        }
+
+        // Хэндлы могли потерять доступ: спрашиваем состояние, но НЕ
+        // запрашиваем — requestPermission требует клика, иначе браузер
+        // откажет, а библиотека молча не заиграет.
+        if (!state.needPermission) {
+            for (const t of state.tracks) {
+                if (t.handle && (await local.permission(t.handle)) !== "granted") {
+                    state.needPermission = true
+                    break
+                }
+            }
+        }
+
+        /* Экран восстанавливается вместе с тем, что на нём было открыто.
+           Но плейлист мог быть удалён в прошлый раз — тогда вместо
+           «не найден» просто уходим на главную. */
+        if (state.view === "playlist" &&
+            !state.playlists.some((p) => p.id === state.arg)) {
+            state.view = "home"
+            state.arg = null
+            prefs.save({ view: "home", arg: null })
+        }
+
+        render()
+        restoreLast()
+        kiwiStep("восстановлено треков: " + state.tracks.length)
+    } catch (e) {
+        kiwiStep("восстановление не удалось: " + e.message)
+        toast("Не удалось прочитать сохранённую библиотеку", true)
+    }
+}
+
+/** Свести содержимое папки с тем, что уже есть: новое добавить,
+ *  пропавшее убрать, остальное не трогать. */
+function mergeFolder(found) {
+    const seen = new Set()
+    for (const { file, handle } of found) {
+        const sig = file.name + ":" + file.size
+        seen.add(sig)
+        const had = state.tracks.find((t) => t.sig === sig)
+        if (had) { had.handle = handle; had.file = file; continue }
+        const meta = fromFilename(file.name)
+        state.tracks.push({
+            key: "loc:" + crypto.randomUUID(),
+            source: "local", kind: "local-handle", handle, sig, file,
+            title: meta.title, artist: meta.artist,
+            album: "", durationS: 0, artwork: null
+        })
+    }
+    // Ушедшие из папки убираем, добавленные вручную не трогаем
+    state.tracks = state.tracks.filter((t) => t.kind !== "local-handle" || seen.has(t.sig))
+    readDurations()
+    persistLater()
+}
+
+/** Вернуть последний трек и секунду, но НЕ запускать: автозапуск без
+ *  жеста браузер всё равно запретит, а показать, где остановился, можно. */
+function restoreLast() {
+    if (!P.lastKey) return
+    const t = byKey(P.lastKey)
+    if (!t) return
+    $("np-title").textContent = t.title
+    $("np-artist").textContent = t.artist
+    $("t-dur").textContent = t.durationS ? fmt(t.durationS) : "0:00"
+    $("t-cur").textContent = fmt(P.lastPos || 0)
+    state.resumeTrack = t
+}
+
+/* ── Плашка «дать доступ» ────────────────────────────────────────── */
+
+/* requestPermission обязан вызываться из обработчика клика — поэтому
+   доступ переспрашивается кнопкой, а не при запуске. Один клик
+   возвращает доступ ко всему сразу. */
+async function askPermission() {
+    let ok = true
+    if (state.folder) {
+        if ((await local.permission(state.folder, true)) !== "granted") ok = false
+        else {
+            const found = await local.rescan(state.folder)
+            if (found) mergeFolder(found)
+        }
+    }
+    for (const t of state.tracks) {
+        if (t.handle && (await local.permission(t.handle, true)) !== "granted") ok = false
+    }
+    state.needPermission = !ok
+    render()
+    toast(ok ? "Доступ восстановлен" : "Доступ так и не выдан", !ok)
+}
 
 render()
 paintMute()
@@ -1029,6 +1362,13 @@ paintMute()
 /* Визуализатор. Спектр берёт у движка сам, а для источников без анализа
    рисует спокойную волну — см. комментарий в viz.js. */
 new Viz($("viz"), engine).start()
+
+// Восстановление асинхронное: ждать его с пустым экраном незачем,
+// каркас уже нарисован и настройки применены.
+// Кнопка папки только там, где браузер умеет её запоминать
+if (local.hasFolder) $("btn-folder").hidden = false
+
+restore()
 
 /* Отладочный доступ. Модуль наружу ничего не отдаёт, а без бандлера и
    sourcemap заглянуть в него из консоли больше нечем: элемент <audio>

@@ -593,3 +593,15 @@ body.is-dragging .empty{border-color:var(--accent);background:var(--accent-dim)}
 }
 @keyframes spin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.loading::before{animation:none}}
+
+
+/* ── Плашка «дать доступ» ────────────────────────────────────────── */
+/* Появляется после перезагрузки, когда браузер снял разрешение на файлы.
+   Заметная, но не тревожная: это обычный шаг, а не поломка. */
+.perm{
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  margin:16px 20px 0;padding:16px 20px;border-radius:var(--r-md);
+  background:var(--accent-dim);border:1px solid rgba(217,119,87,.35);
+  animation:rise .3s ease both;
+}
+.perm__body{flex:1;min-width:220px}
