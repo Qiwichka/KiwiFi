@@ -29,6 +29,7 @@
  */
 
 import { Background, SCENES } from "./bg.js"
+import { Engine } from "./player/engine.js"
 
 kiwiStep("модуль запущен")
 
@@ -115,15 +116,6 @@ const state = {
     tracks: [],        // вся библиотека
     playlists: [],     // { id, title, scene, keys: [ключи треков] }
 
-    queue: [],         // что играет сейчас — СВОЙ список, не срез библиотеки
-    pos: -1,           // позиция в queue
-    from: "Библиотека",// откуда набрана очередь, для экрана «Очередь»
-
-    shuffle: false,
-    repeat: "off",     // off | all | one
-    volume: 0.8,
-    muted: false,
-
     view: "home",
     arg: null,
     query: "",
@@ -131,15 +123,15 @@ const state = {
     fwd: []
 }
 
-/* Один элемент на всё время жизни страницы — см. комментарий в шапке. */
-const audio = new Audio()
-audio.preload = "metadata"
-audio.volume = state.volume
+/* Всё воспроизведение — через движок. Он держит очередь и сам выбирает,
+   каким адаптером играть трек: свои файлы обычным <audio>, SoundCloud
+   через виджет. Интерфейс про адаптеры не знает вовсе. */
+const engine = new Engine()
 
 let bg = null
 
 const byKey = (k) => state.tracks.find((t) => t.key === k)
-const curTrack = () => (state.pos >= 0 ? state.queue[state.pos] : null)
+const curTrack = () => engine.track
 const plTracks = (p) => p.keys.map(byKey).filter(Boolean)
 
 /* ══ Экраны ═══════════════════════════════════════════════════════ */
@@ -227,7 +219,7 @@ function toolbar(tracks, from) {
         el("button", { class: "btn btn--play", onclick: () => playList(tracks, 0, from) },
             svg(I.play), "Слушать"),
         el("button", { class: "btn btn--ghost", onclick: () => {
-            state.shuffle = true
+            engine.setShuffle(true)
             $("btn-shuffle").classList.add("is-on")
             playList(tracks, 0, from)
         } }, svg(I.shuf), "Вперемешку"))
@@ -336,14 +328,7 @@ function viewSearch() {
         box.appendChild(el("h1", { class: "page__title", text: "Поиск" }))
         box.appendChild(el("p", { class: "page__sub",
             text: "Ищет по названию, исполнителю и альбому в твоей библиотеке." }))
-        // Честно говорим, чего пока нет: обещать поиск по SoundCloud до
-        // фазы 8 нельзя, а молчать про него — значит выглядеть недоделкой.
-        box.appendChild(el("div", { class: "note" },
-            el("span", { class: "note__ico", html: I.sc }),
-            el("div", null,
-                el("div", { class: "note__t", text: "Поиск по SoundCloud появится позже" }),
-                el("div", { class: "note__d",
-                    text: "Он требует отдельной локальной службы — она в плане на фазу 8. Проигрывание по ссылке заработает раньше, в фазе 4." }))))
+        box.appendChild(scBox())
         return box
     }
 
@@ -358,6 +343,70 @@ function viewSearch() {
     box.appendChild(toolbar(hit, "Поиск: " + state.query))
     box.appendChild(trackTable(hit, "Поиск: " + state.query))
     return box
+}
+
+/* Вставка ссылки на SoundCloud.
+ *
+ * Это ЕДИНСТВЕННЫЙ способ добавить трек оттуда, который работает на
+ * обычном сайте: поиск требует запросов к их внутреннему API, а браузер
+ * их не пустит — режет CORS. Поиск появится, когда будет запущена
+ * локальная служба (фаза 8) или в APK, где нативные запросы идут мимо
+ * браузерных ограничений.
+ *
+ * Само проигрывание при этом полноценное: играет официальный виджет в
+ * спрятанном iframe, а кнопки, полоса и очередь — наши. */
+function scBox() {
+    const input = el("input", {
+        type: "url", class: "sc__input", id: "sc-url",
+        placeholder: "https://soundcloud.com/artist/track",
+        autocomplete: "off", spellcheck: "false"
+    })
+    const go = el("button", { class: "btn btn--play", onclick: () => submit() },
+        svg(I.plus), "Добавить")
+
+    const submit = () => {
+        const url = input.value.trim()
+        if (!url) return
+        if (!/^https?:\/\/(www\.|m\.|on\.)?soundcloud\.com\//i.test(url)) {
+            toast("Это не похоже на ссылку SoundCloud", true)
+            return
+        }
+        input.value = ""
+        addSoundCloud(url)
+    }
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit() })
+
+    return el("div", { class: "sc" },
+        el("div", { class: "sc__head" },
+            el("span", { class: "sc__ico", html: I.sc }),
+            el("div", null,
+                el("div", { class: "note__t", text: "Трек или плейлист с SoundCloud" }),
+                el("div", { class: "note__d",
+                    text: "Вставь ссылку — трек встанет в общую очередь вместе со своими. Играет официальный виджет, кнопки и перемотка наши." }))),
+        el("div", { class: "sc__row" }, input, go),
+        el("div", { class: "note__d sc__hint",
+            text: "Поиска по SoundCloud здесь нет: браузер не пускает запросы к их API. Он появится вместе с локальной службой и в приложении для Android." }))
+}
+
+function addSoundCloud(url) {
+    if (state.tracks.some((t) => t.scUrl === url)) {
+        toast("Такой трек уже добавлен")
+        return
+    }
+    const t = {
+        key: "sc:" + crypto.randomUUID(),
+        source: "soundcloud",
+        scUrl: url,
+        // Настоящие название и автор придут от виджета после загрузки —
+        // до этого показываем заглушку, иначе строка будет пустой.
+        title: "Трек SoundCloud",
+        artist: "Загружается…",
+        album: "", durationS: 0, artwork: null
+    }
+    state.tracks.push(t)
+    kiwiStep("добавлен трек SoundCloud")
+    render()
+    playList([t], 0, "SoundCloud")
 }
 
 /* ── Экран: Библиотека ───────────────────────────────────────────── */
@@ -433,7 +482,7 @@ function viewPlaylist() {
         bar.appendChild(el("button", { class: "btn btn--play", onclick: () => playList(list, 0, p.title) },
             svg(I.play), "Слушать"))
         bar.appendChild(el("button", { class: "btn btn--ghost", onclick: () => {
-            state.shuffle = true
+            engine.setShuffle(true)
             $("btn-shuffle").classList.add("is-on")
             playList(list, 0, p.title)
         } }, svg(I.shuf), "Вперемешку"))
@@ -463,25 +512,25 @@ function viewQueue() {
     const box = el("div", { class: "page" })
     box.appendChild(el("h1", { class: "page__title", text: "Очередь" }))
 
-    if (!state.queue.length) {
+    if (!engine.queue.length) {
         box.appendChild(el("p", { class: "page__sub", text: "Очередь пуста — включи что-нибудь" }))
         return box
     }
-    box.appendChild(el("p", { class: "page__sub", text: "Играет из: " + state.from }))
+    box.appendChild(el("p", { class: "page__sub", text: "Играет из: " + engine.from }))
 
-    const now = state.queue.slice(state.pos, state.pos + 1)
-    const rest = state.queue.slice(state.pos + 1)
+    const now = engine.queue.slice(engine.pos, engine.pos + 1)
+    const rest = engine.queue.slice(engine.pos + 1)
 
     if (now.length) {
         box.appendChild(el("h2", { class: "sec__t sec__t--solo", text: "Сейчас играет" }))
-        box.appendChild(trackTable(now, state.from))
+        box.appendChild(trackTable(now, engine.from))
     }
     box.appendChild(el("h2", { class: "sec__t sec__t--solo",
         text: rest.length ? "Далее — " + nTracks(rest.length) : "Дальше ничего" }))
     if (rest.length) {
         // Нумерация в этой таблице своя, с единицы, а играть надо ту же
         // позицию очереди — отсюда смещение.
-        const off = state.pos + 1
+        const off = engine.pos + 1
         const rows = rest.map((t, i) => queueRow(t, i, () => playAt(off + i)))
         box.appendChild(el("section", { class: "tracks" }, el("div", { id: "rows" }, rows)))
     }
@@ -584,90 +633,30 @@ function paintDurations() {
     }
 }
 
-/** Набрать очередь из списка и начать с позиции i. */
-function playList(list, i, from) {
-    state.queue = list.slice()
-    state.from = from || "Библиотека"
-    if (state.shuffle) {
-        const first = state.queue[i]
-        for (let j = state.queue.length - 1; j > 0; j--) {
-            const k = Math.floor(Math.random() * (j + 1))
-            ;[state.queue[j], state.queue[k]] = [state.queue[k], state.queue[j]]
-        }
-        // Тот трек, по которому щёлкнули, обязан заиграть первым —
-        // перемешивание касается того, что идёт после него.
-        const at = state.queue.indexOf(first)
-        if (at > 0) [state.queue[0], state.queue[at]] = [state.queue[at], state.queue[0]]
-        i = 0
-    }
-    playAt(i)
-}
+/* Тонкие обёртки над движком: очередь, порядок и переключение адаптеров
+   он держит сам, интерфейсу остаётся только попросить. */
 
-function playAt(i) {
-    if (!state.queue.length) return
-    state.pos = ((i % state.queue.length) + state.queue.length) % state.queue.length
-    const t = state.queue[state.pos]
-    if (!t) return
-
-    // Прошлый objectURL отзываем обязательно. Забытые ссылки — это то,
-    // как плеер незаметно начинает держать в памяти всю фонотеку.
-    if (audio.src && audio.src.startsWith("blob:")) URL.revokeObjectURL(audio.src)
-
-    audio.src = URL.createObjectURL(t.file)
-    audio.play().catch((e) => {
-        const name = e && e.name
-        kiwiStep("play отклонён: " + name)
-        // AbortError означает, что предыдущий play() оборвали сменой src.
-        // При быстром переключении треков это норма, а не поломка.
-        if (name === "AbortError") return
-        if (name === "NotAllowedError") toast("Нажми ещё раз — браузер ждёт клика", true)
-        else toast("Не удалось воспроизвести: " + t.title, true)
-    })
-
-    $("np-title").textContent = t.title
-    $("np-artist").textContent = t.artist
-    document.title = t.artist + " — " + t.title + " · KiwiFi"
-    paintCurrent()
-    setMediaSession(t)
-    if (state.view === "queue") render()
-}
-
-function next(auto = false) {
-    if (!state.queue.length) return
-    if (auto && state.repeat === "one") { audio.currentTime = 0; audio.play(); return }
-    if (auto && state.pos + 1 >= state.queue.length && state.repeat === "off") {
-        audio.pause()
-        audio.currentTime = 0
-        return
-    }
-    playAt(state.pos + 1)
-}
-
-function prev() {
-    // Как у всех: в первые три секунды кнопка возвращает к началу трека,
-    // и только потом — к предыдущему.
-    if (audio.currentTime > 3) { audio.currentTime = 0; return }
-    playAt(state.pos - 1)
-}
+const playList = (list, i = 0, from = "Библиотека") => engine.playList(list, i, from)
+const playAt = (i) => engine.playAt(i)
 
 function toggle() {
-    if (!state.queue.length) {
+    if (!engine.queue.length) {
         if (state.tracks.length) playList(state.tracks, 0, "Библиотека")
         else pickFiles()
         return
     }
-    if (audio.paused) audio.play().catch(() => {})
-    else audio.pause()
+    engine.toggle()
 }
 
 function setMediaSession(t) {
     if (!("mediaSession" in navigator)) return
     navigator.mediaSession.metadata = new MediaMetadata({
-        title: t.title, artist: t.artist, album: t.album || "KiwiFi"
+        title: t.title, artist: t.artist, album: t.album || "KiwiFi",
+        artwork: t.artwork ? [{ src: t.artwork }] : []
     })
     const h = {
-        play: () => audio.play(), pause: () => audio.pause(),
-        previoustrack: prev, nexttrack: () => next(false)
+        play: () => engine.toggle(), pause: () => engine.toggle(),
+        previoustrack: () => engine.prev(), nexttrack: () => engine.next(false)
     }
     for (const k in h) { try { navigator.mediaSession.setActionHandler(k, h[k]) } catch (e) {} }
 }
@@ -777,63 +766,89 @@ function makeBar(elm, fill, knob, onChange, getValue) {
 }
 
 const seekBar = makeBar($("seek"), $("seek-fill"), $("seek-knob"),
-    (v) => { if (audio.duration) audio.currentTime = v * audio.duration },
-    () => (audio.duration ? audio.currentTime / audio.duration : 0))
+    (v) => { const d = engine.state.duration; if (d) engine.seek(v * d) },
+    () => { const d = engine.state.duration; return d ? engine.state.position / d : 0 })
 
 const volBar = makeBar($("vol"), $("vol-fill"), $("vol-knob"),
-    (v) => { state.volume = v; state.muted = false; audio.muted = false; audio.volume = v; paintMute() },
-    () => state.volume)
+    (v) => { engine.setVolume(v); paintMute() },
+    () => engine.volume)
 
-volBar.paint(state.volume)
-function paintMute() { $("btn-mute").classList.toggle("is-on", state.muted) }
+volBar.paint(engine.volume)
+function paintMute() { $("btn-mute").classList.toggle("is-on", engine.muted) }
 
 /* ── Плавная полоса прогресса ────────────────────────────────────── */
 
+/* События времени приходят рвано — около четырёх раз в секунду у <audio>
+   и ещё реже у SoundCloud. Если вешать полосу прямо на них, она заметно
+   дёргается. Поэтому свой цикл досчитывает время между событиями и
+   защёлкивается на каждом настоящем. Одна реализация на оба движка. */
 let lastTime = 0, lastAt = 0
 
-audio.addEventListener("timeupdate", () => { lastTime = audio.currentTime; lastAt = performance.now() })
-audio.addEventListener("loadedmetadata", () => {
-    $("t-dur").textContent = fmt(audio.duration)
-    const t = curTrack()
-    if (t && !t.durationS && isFinite(audio.duration)) { t.durationS = audio.duration; paintDurations() }
+engine.addEventListener("time", (e) => {
+    lastTime = e.detail.position
+    lastAt = performance.now()
+})
+
+engine.addEventListener("ready", (e) => {
+    $("t-dur").textContent = fmt(e.detail.duration)
+    lastTime = 0
+    lastAt = performance.now()
 })
 
 function tick() {
     requestAnimationFrame(tick)
-    if (!audio.duration || !isFinite(audio.duration)) return
+    const d = engine.state.duration
+    if (!d || !isFinite(d)) return
     let cur = lastTime
-    if (!audio.paused) cur += (performance.now() - lastAt) / 1000
-    cur = Math.min(cur, audio.duration)
+    if (engine.playing) cur += (performance.now() - lastAt) / 1000
+    cur = Math.min(cur, d)
     $("t-cur").textContent = fmt(cur)
-    if (!seekBar.isGrabbing()) seekBar.paint(cur / audio.duration)
+    if (!seekBar.isGrabbing()) seekBar.paint(cur / d)
 }
 requestAnimationFrame(tick)
 
-/* ── События плеера ──────────────────────────────────────────────── */
+/* ── События движка ──────────────────────────────────────────────── */
 
-audio.addEventListener("play", () => {
+engine.addEventListener("play", () => {
     $("icon-play").hidden = true
     $("icon-pause").hidden = false
     $("btn-play").title = "Пауза"
     bg && bg.setPlaying(true)
 })
-audio.addEventListener("pause", () => {
+
+engine.addEventListener("pause", () => {
     $("icon-play").hidden = false
     $("icon-pause").hidden = true
     $("btn-play").title = "Играть"
     bg && bg.setPlaying(false)
 })
-audio.addEventListener("ended", () => next(true))
-audio.addEventListener("error", () => {
-    // Пустой src — это не сбой, а состояние «ничего не выбрано»: браузер
-    // всё равно шлёт error, и без проверки приложение ругалось бы на
-    // пустом плеере.
-    if (!audio.src || state.pos < 0) return
-    const t = curTrack()
-    // Чаще всего это не поломка кода, а формат, который браузер не умеет
-    // (частый гость — .wma, бывает и .flac в Safari).
-    toast("Браузер не смог открыть: " + (t ? t.title : "файл"), true)
-    kiwiStep("ошибка audio: " + (audio.error && audio.error.code))
+
+engine.addEventListener("track", (e) => {
+    const t = e.detail.track
+    $("np-title").textContent = t.title
+    $("np-artist").textContent = t.artist
+    document.title = t.artist + " — " + t.title + " · KiwiFi"
+    paintCurrent()
+    setMediaSession(t)
+    if (state.view === "queue") render()
+})
+
+/* SoundCloud отдаёт настоящие название и автора только после загрузки —
+   до этого в списке стоит заглушка, поэтому перерисовываем. */
+engine.addEventListener("meta", (e) => {
+    const t = e.detail.track
+    $("np-title").textContent = t.title
+    $("np-artist").textContent = t.artist
+    document.title = t.artist + " — " + t.title + " · KiwiFi"
+    setMediaSession(t)
+    render()
+})
+
+engine.addEventListener("error", (e) => {
+    const d = e.detail || {}
+    // Запрет автозапуска — не поломка: браузер ждёт нажатия.
+    toast(d.message || "Не удалось воспроизвести", true)
+    kiwiStep("ошибка движка: " + d.code)
 })
 
 /* ── Кнопки ──────────────────────────────────────────────────────── */
@@ -853,32 +868,31 @@ $("btn-fwd").addEventListener("click", forward)
 $("btn-new-playlist").addEventListener("click", newPlaylist)
 
 $("btn-play").addEventListener("click", toggle)
-$("btn-next").addEventListener("click", () => next(false))
-$("btn-prev").addEventListener("click", prev)
+$("btn-next").addEventListener("click", () => engine.next(false))
+$("btn-prev").addEventListener("click", () => engine.prev())
 
 $("btn-shuffle").addEventListener("click", () => {
-    state.shuffle = !state.shuffle
-    $("btn-shuffle").classList.toggle("is-on", state.shuffle)
-    toast(state.shuffle ? "Вперемешку" : "По порядку")
+    engine.setShuffle(!engine.shuffle)
+    $("btn-shuffle").classList.toggle("is-on", engine.shuffle)
+    toast(engine.shuffle ? "Вперемешку" : "По порядку")
 })
 
 $("btn-repeat").addEventListener("click", () => {
-    state.repeat = state.repeat === "off" ? "all" : state.repeat === "all" ? "one" : "off"
+    const mode = engine.cycleRepeat()
     const b = $("btn-repeat")
-    b.classList.toggle("is-on", state.repeat !== "off")
-    b.title = { off: "Повтор выключен", all: "Повторять список", one: "Повторять трек" }[state.repeat]
+    b.classList.toggle("is-on", mode !== "off")
+    b.title = { off: "Повтор выключен", all: "Повторять список", one: "Повторять трек" }[mode]
     toast(b.title)
 })
 
 $("btn-mute").addEventListener("click", () => {
-    state.muted = !state.muted
-    audio.muted = state.muted
-    volBar.paint(state.muted ? 0 : state.volume)
+    engine.setMuted(!engine.muted)
+    volBar.paint(engine.muted ? 0 : engine.volume)
     paintMute()
 })
 
 $("np-art").addEventListener("click", () => {
-    if (state.pos >= 0) toast("Полноэкранный режим будет в фазе 6")
+    if (engine.track) toast("Полноэкранный режим будет в фазе 6")
 })
 
 const q = $("q")
@@ -919,8 +933,8 @@ window.addEventListener("drop", (e) => {
 window.addEventListener("keydown", (e) => {
     if (e.target.matches("input,textarea") || e.target.isContentEditable) return
     if (e.code === "Space") { e.preventDefault(); toggle() }
-    else if (e.code === "ArrowRight" && e.ctrlKey) next(false)
-    else if (e.code === "ArrowLeft" && e.ctrlKey) prev()
+    else if (e.code === "ArrowRight" && e.ctrlKey) engine.next(false)
+    else if (e.code === "ArrowLeft" && e.ctrlKey) engine.prev()
     else if (e.key === "/") { e.preventDefault(); go("search") }
 })
 
@@ -936,7 +950,7 @@ paintMute()
 /* Отладочный доступ. Модуль наружу ничего не отдаёт, а без бандлера и
    sourcemap заглянуть в него из консоли больше нечем: элемент <audio>
    создан кодом и в разметке его нет, так что даже через DOM не найти. */
-window.__kiwi = { state, audio, bg, go, playList, playAt, next, prev }
+window.__kiwi = { state, engine, bg, go, playList, playAt }
 
 window.kiwiReady = true
 kiwiStep("готово")
