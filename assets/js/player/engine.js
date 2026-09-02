@@ -17,6 +17,7 @@
 
 import { HtmlAudioAdapter } from "./html5.js"
 import { SoundCloudAdapter } from "./scwidget.js"
+import { Graph } from "./graph.js"
 
 export class Engine extends EventTarget {
     constructor() {
@@ -30,6 +31,12 @@ export class Engine extends EventTarget {
         this.muted = false
 
         this.html = new HtmlAudioAdapter()
+        /* Анализ звука. Граф собирается не сразу, а при первом же треке,
+           который анализировать МОЖНО: свой файл или источник с открытым
+           CORS. Собрать его заранее нельзя — после подключения весь звук
+           элемента идёт через Web Audio, и чужой файл без CORS замолчал бы
+           молча, без единой ошибки. */
+        this.graph = new Graph(this.html.el)
         this.sc = null          // поднимаем лениво: без треков SoundCloud
                                 // незачем грузить их скрипт вообще
         this.current = this.html
@@ -88,6 +95,22 @@ export class Engine extends EventTarget {
                Кто именно дорешивает трек, движок не знает: это
                подставляет приложение. */
             if (this.resolve) await this.resolve(track)
+
+            /* Граф собирается ДО load, а не после.
+             *
+             * createMediaElementSource перенаправляет вывод элемента, и
+             * если сделать это, когда элемент уже тянет файл, загрузка
+             * рвётся — браузер отвечает «формат не поддерживается» на
+             * обычном mp3. Проверено: с этим порядком трек играет, с
+             * обратным падает.
+             *
+             * И только на безопасном треке: свой файл или источник с
+             * открытым CORS. После подключения весь звук идёт через Web
+             * Audio, и чужой файл без CORS замолчал бы молча. */
+            if (next === this.html && (track.cors || track.file)) {
+                this.graph.ensure()
+            }
+            this.graph.resume()
 
             await next.load(track)
             // SoundCloud отдаёт настоящие название и автора только после

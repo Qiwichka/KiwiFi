@@ -262,10 +262,21 @@ body.is-dragging .empty{border-color:var(--accent);background:var(--accent-dim)}
 
 /* ── Панель плеера ───────────────────────────────────────────────── */
 .player{
-  grid-area:player;
+  grid-area:player;position:relative;overflow:hidden;
   display:grid;grid-template-columns:1fr minmax(320px,42%) 1fr;
   align-items:center;gap:16px;padding:0 18px;
 }
+
+/* Спектр лежит по нижней кромке панели, под всем содержимым. Приглушён
+   намеренно: это фон, а не главный герой — поверх него читается текст. */
+.viz{
+  position:absolute;left:0;right:0;bottom:0;
+  width:100%;height:38px;display:block;
+  opacity:.28;pointer-events:none;z-index:0;
+  -webkit-mask-image:linear-gradient(to top,#000 30%,transparent 100%);
+  mask-image:linear-gradient(to top,#000 30%,transparent 100%);
+}
+.np,.transport,.extras{position:relative;z-index:1}
 .np{display:flex;align-items:center;gap:13px;min-width:0}
 .np__art{
   width:58px;height:58px;flex:none;border-radius:var(--r-sm);object-fit:cover;

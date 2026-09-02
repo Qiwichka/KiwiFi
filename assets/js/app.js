@@ -31,6 +31,7 @@
 import { Background, SCENES } from "./bg.js"
 import { Engine } from "./player/engine.js"
 import * as audius from "./sources/audius.js"
+import { Viz } from "./viz.js"
 
 kiwiStep("модуль запущен")
 
@@ -1024,6 +1025,10 @@ bg = new Background({
 
 render()
 paintMute()
+
+/* Визуализатор. Спектр берёт у движка сам, а для источников без анализа
+   рисует спокойную волну — см. комментарий в viz.js. */
+new Viz($("viz"), engine).start()
 
 /* Отладочный доступ. Модуль наружу ничего не отдаёт, а без бандлера и
    sourcemap заглянуть в него из консоли больше нечем: элемент <audio>
