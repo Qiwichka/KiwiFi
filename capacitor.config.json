@@ -1,0 +1,11 @@
+{
+  "appId": "app.kiwifi.player",
+  "appName": "KiwiFi",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

@@ -1,9 +1,19 @@
 {
   "name": "kiwifi",
-  "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Музыкальный плеер: свои треки, облако и SoundCloud",
+  "private": true,
   "scripts": {
-    "serve": "node tools/serve.js"
+    "serve": "node tools/serve.js",
+    "www": "node tools/make-www.js",
+    "android": "node tools/make-www.js && cap sync android"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/cli": "^6.2.0",
+    "@capacitor/core": "^6.2.0"
+  },
+  "dependencies": {
+    "@capacitor/filesystem": "^6.0.4"
   }
 }
