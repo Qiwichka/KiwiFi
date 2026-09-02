@@ -1,0 +1,9 @@
+# На сайт эти папки не нужны: они только для сборки APK и разработки
+android/
+www/
+tools/
+node_modules/
+.github/
+*.apk
+*.jks
+android-signing.txt
