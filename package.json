@@ -1,0 +1,9 @@
+{
+  "name": "kiwifi",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Музыкальный плеер: свои треки, облако и SoundCloud",
+  "scripts": {
+    "serve": "node tools/serve.js"
+  }
+}

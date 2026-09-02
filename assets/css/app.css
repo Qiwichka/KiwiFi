@@ -1,0 +1,549 @@
+/* ══ KiwiFi ═══════════════════════════════════════════════════════════
+ * Раскладка взята у Спотифая: слева колонка с библиотекой, справа
+ * содержимое, внизу через всю ширину панель плеера.
+ *
+ * Отличие: под всем этим крутится живой шейдер (assets/js/bg.js), поэтому
+ * панели полупрозрачные и размытые — фон должен просвечивать, иначе весь
+ * смысл теряется. Читаемость держится не на непрозрачности панелей, а на
+ * вуали --dim поверх канваса: у каждого плейлиста своя, потому что на
+ * светлом фоне текст тонет, а на тёмном лишнее затемнение делает грязь.
+ * Токены цветов — из finan, они уже отлажены.
+ * ════════════════════════════════════════════════════════════════════ */
+
+:root{
+  --bg:#1F1E1D;
+  --surface:#262624;
+  --surface-2:#2F2E2C;
+  --surface-3:#3A3936;
+  --border:#3A3936;
+  --border-soft:#302F2D;
+  --text:#F0EEE6;
+  --muted:#A3A099;
+  --faint:#7A776F;
+
+  --accent:#D97757;
+  --accent-hi:#E08B6E;
+  --accent-dim:rgba(217,119,87,.14);
+  --danger:#CF6558;
+
+  --r-sm:10px; --r-md:14px; --r-lg:20px; --r-xl:26px;
+  --pad:20px;
+  --safe-t:env(safe-area-inset-top,0px);
+  --safe-b:env(safe-area-inset-bottom,0px);
+
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+
+  /* Стеклянные панели поверх шейдера */
+  --glass:rgba(20,19,18,.52);
+  --glass-2:rgba(38,38,36,.48);
+  --glass-line:rgba(240,238,230,.08);
+
+  /* Сила вуали. Задаётся плейлистом, отсюда — значение по умолчанию. */
+  --dim:.40;
+
+  --sidebar:248px;
+  --player-h:92px;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--font);
+  font-size:15px;
+  line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+  -webkit-tap-highlight-color:transparent;
+  overscroll-behavior:none;
+  overflow:hidden;
+}
+[hidden]{display:none !important}
+button,input,select{font:inherit;color:inherit;font-family:inherit}
+button{background:none;border:0;cursor:pointer;padding:0}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(240,238,230,.14);border-radius:8px}
+::-webkit-scrollbar-thumb:hover{background:rgba(240,238,230,.24)}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ── Фон ─────────────────────────────────────────────────────────── */
+.bg{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+/* Статичный градиент лежит под канвасами. Если WebGL нет или контекст
+   отвалился, виден останется он — приложение не должно превращаться в
+   чёрный лист из-за фона. */
+.bg::before{
+  content:"";position:absolute;inset:0;
+  background:
+    linear-gradient(180deg,#1E7BF0 0%,#7FB0EA 46%,#CFE2F5 58%,#2C4A1E 74%,#0B1D08 100%);
+}
+.bg__layer{position:absolute;display:block;opacity:0;transition:opacity 1s ease}
+.bg.is-live .bg__layer{opacity:1}
+.bg__layer[hidden]{display:none !important}
+
+.bg__sky{inset:0;width:100%;height:100%}
+.bg__reflect{inset:0;width:100%;height:100%}
+
+/* Трава занимает низ экрана и растворяется у своей верхней кромки — иначе
+   между ней и небом шёл бы видимый шов. Маска та же, что в saittest. */
+.bg__grass{
+  inset:auto 0 0 0;width:100%;height:78vh;
+  -webkit-mask-image:linear-gradient(to bottom,transparent 30%,#000 39.5%);
+  mask-image:linear-gradient(to bottom,transparent 30%,#000 39.5%);
+}
+
+/* Та самая вуаль. Снизу гуще: там панель плеера и мелкий текст, а под ней
+   как раз самая пёстрая часть картинки — трава. */
+.bg__scrim{
+  position:absolute;inset:0;
+  background:linear-gradient(180deg,
+    rgba(13,12,11,calc(var(--dim) * .82)) 0%,
+    rgba(13,12,11,calc(var(--dim) * .95)) 42%,
+    rgba(13,12,11,calc(var(--dim) * 1.08)) 100%);
+  transition:background 1s ease;
+}
+
+/* ── Каркас ──────────────────────────────────────────────────────── */
+.app{
+  position:relative;z-index:1;
+  height:100%;
+  display:grid;
+  grid-template-columns:var(--sidebar) 1fr;
+  grid-template-rows:1fr var(--player-h);
+  grid-template-areas:"side main" "player player";
+  gap:8px;padding:8px;
+  padding-top:calc(8px + var(--safe-t));
+  padding-bottom:calc(8px + var(--safe-b));
+}
+
+.panel{
+  background:var(--glass);
+  backdrop-filter:blur(22px) saturate(140%);
+  -webkit-backdrop-filter:blur(22px) saturate(140%);
+  border:1px solid var(--glass-line);
+  border-radius:var(--r-lg);
+}
+
+/* ── Боковая колонка ─────────────────────────────────────────────── */
+.side{grid-area:side;display:flex;flex-direction:column;overflow:hidden}
+.side__brand{
+  display:flex;align-items:center;gap:10px;
+  padding:18px 18px 14px;font-size:19px;font-weight:650;letter-spacing:-.02em;
+}
+.side__brand svg{width:24px;height:24px;flex:none}
+.side__nav{padding:0 10px 10px;display:grid;gap:2px}
+.navlink{
+  display:flex;align-items:center;gap:12px;
+  padding:9px 12px;border-radius:var(--r-sm);
+  color:var(--muted);font-weight:550;font-size:14.5px;
+  transition:background .15s,color .15s;text-align:left;width:100%;
+}
+.navlink svg{width:19px;height:19px;flex:none;fill:none;stroke:currentColor;
+  stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.navlink:hover{color:var(--text);background:rgba(240,238,230,.05)}
+.navlink.is-active{color:var(--text);background:rgba(240,238,230,.09)}
+.navlink.is-active svg{stroke:var(--accent)}
+
+.side__sep{height:1px;background:var(--glass-line);margin:6px 16px 12px}
+.side__label{
+  padding:0 18px 8px;font-size:11.5px;font-weight:600;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--faint);
+}
+.side__list{flex:1;overflow-y:auto;padding:0 10px 10px;display:grid;gap:2px;align-content:start}
+.side__foot{padding:12px 16px;border-top:1px solid var(--glass-line)}
+
+/* ── Основная область ────────────────────────────────────────────── */
+.main{grid-area:main;overflow:hidden;display:flex;flex-direction:column;position:relative}
+.main__scroll{flex:1;overflow-y:auto;padding:0 0 24px}
+
+.hero{
+  padding:38px 32px 26px;
+  display:flex;align-items:flex-end;gap:24px;
+}
+.hero__art{
+  width:180px;height:180px;flex:none;border-radius:var(--r-md);
+  background:linear-gradient(140deg,var(--accent),#7a3f8e);
+  box-shadow:0 18px 46px rgba(0,0,0,.5);
+  display:grid;place-items:center;
+}
+.hero__art svg{width:64px;height:64px;opacity:.85}
+.hero__kind{font-size:11.5px;font-weight:600;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted)}
+.hero__title{margin:6px 0 10px;font-size:clamp(30px,5vw,58px);font-weight:700;
+  letter-spacing:-.03em;line-height:1.02}
+.hero__meta{color:var(--muted);font-size:13.5px}
+
+.toolbar{
+  display:flex;align-items:center;gap:12px;
+  padding:6px 32px 18px;
+}
+.btn{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:11px 20px;border-radius:999px;font-weight:600;font-size:14px;
+  background:var(--surface-2);color:var(--text);
+  border:1px solid var(--glass-line);
+  transition:transform .12s ease,background .15s,border-color .15s;
+}
+.btn:hover{background:var(--surface-3)}
+.btn:active{transform:scale(.97)}
+.btn svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
+.btn--play{background:var(--accent);color:#1a1210;border-color:transparent;padding:13px 26px}
+.btn--play:hover{background:var(--accent-hi)}
+.btn--play svg{fill:currentColor;stroke:none;width:15px;height:15px}
+.btn--ghost{background:transparent}
+.btn--ghost:hover{background:rgba(240,238,230,.06)}
+
+/* ── Список треков ───────────────────────────────────────────────── */
+.tracks{padding:0 20px}
+.tracks__head{
+  display:grid;grid-template-columns:36px 1fr 180px 64px;
+  gap:14px;align-items:center;
+  padding:0 12px 8px;margin:0 0 6px;
+  border-bottom:1px solid var(--glass-line);
+  font-size:11.5px;font-weight:600;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--faint);
+}
+.row{
+  display:grid;grid-template-columns:36px 1fr 180px 64px;
+  gap:14px;align-items:center;
+  padding:9px 12px;border-radius:var(--r-sm);
+  cursor:default;transition:background .12s;
+  animation:rise .34s ease both;
+}
+.row:hover{background:rgba(240,238,230,.06)}
+.row.is-current{background:var(--accent-dim)}
+.row.is-current .row__title{color:var(--accent)}
+.row__num{color:var(--faint);font-size:13.5px;text-align:right;font-variant-numeric:tabular-nums}
+.row:hover .row__num{color:var(--text)}
+.row__main{min-width:0;display:flex;align-items:center;gap:11px}
+.row__art{
+  width:38px;height:38px;flex:none;border-radius:7px;object-fit:cover;
+  background:var(--surface-3);display:grid;place-items:center;
+}
+.row__art svg{width:17px;height:17px;opacity:.4}
+.row__text{min-width:0}
+.row__title{
+  font-weight:550;font-size:14.5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.row__artist{
+  color:var(--muted);font-size:13px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.row__album{color:var(--muted);font-size:13.5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row__end{display:flex;align-items:center;justify-content:flex-end;gap:10px}
+.row__time{color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}
+
+/* Значок источника — то, чего у Спотифая нет и не нужно, а нам нужно:
+   с одного взгляда видно, лежит трек на диске, в облаке или это SoundCloud. */
+.src{
+  width:17px;height:17px;flex:none;opacity:.5;
+  fill:none;stroke:currentColor;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round;
+}
+.row:hover .src{opacity:.8}
+
+/* ── Пустой экран и перетаскивание ───────────────────────────────── */
+.empty{
+  margin:36px 32px;padding:56px 28px;text-align:center;
+  border:1.5px dashed rgba(240,238,230,.16);border-radius:var(--r-lg);
+  transition:border-color .2s,background .2s;
+}
+.empty__icon{width:56px;height:56px;margin:0 auto 18px;opacity:.35;
+  fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+.empty__title{font-size:19px;font-weight:600;margin:0 0 6px}
+.empty__text{color:var(--muted);margin:0 0 22px;font-size:14px}
+body.is-dragging .empty{border-color:var(--accent);background:var(--accent-dim)}
+
+/* ── Панель плеера ───────────────────────────────────────────────── */
+.player{
+  grid-area:player;
+  display:grid;grid-template-columns:1fr minmax(320px,42%) 1fr;
+  align-items:center;gap:16px;padding:0 18px;
+}
+.np{display:flex;align-items:center;gap:13px;min-width:0}
+.np__art{
+  width:58px;height:58px;flex:none;border-radius:var(--r-sm);object-fit:cover;
+  background:var(--surface-3);display:grid;place-items:center;cursor:pointer;
+  transition:transform .18s ease;
+}
+.np__art:hover{transform:scale(1.04)}
+.np__art svg{width:22px;height:22px;opacity:.4}
+.np__text{min-width:0}
+.np__title{font-weight:600;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.np__artist{color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.transport{display:grid;gap:7px;justify-items:center}
+.transport__btns{display:flex;align-items:center;gap:16px}
+.ctl{
+  display:grid;place-items:center;width:34px;height:34px;border-radius:50%;
+  color:var(--muted);transition:color .15s,transform .12s,background .15s;
+}
+.ctl svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.9;
+  stroke-linecap:round;stroke-linejoin:round}
+.ctl:hover{color:var(--text)}
+.ctl:active{transform:scale(.92)}
+.ctl.is-on{color:var(--accent)}
+.ctl--play{
+  width:42px;height:42px;background:var(--text);color:#17110f;
+}
+.ctl--play svg{fill:currentColor;stroke:none;width:17px;height:17px}
+.ctl--play:hover{background:#fff;transform:scale(1.05)}
+
+.seek{display:flex;align-items:center;gap:11px;width:100%}
+.seek__t{
+  color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums;
+  min-width:38px;text-align:center;
+}
+.bar{
+  flex:1;height:14px;display:flex;align-items:center;cursor:pointer;
+  position:relative;touch-action:none;
+}
+.bar__track{width:100%;height:4px;border-radius:2px;background:rgba(240,238,230,.18);
+  overflow:hidden;position:relative}
+.bar__fill{height:100%;width:0;background:var(--muted);border-radius:2px}
+.bar:hover .bar__fill{background:var(--accent)}
+.bar__knob{
+  position:absolute;top:50%;left:0;width:12px;height:12px;border-radius:50%;
+  background:var(--text);transform:translate(-50%,-50%) scale(0);
+  transition:transform .14s ease;pointer-events:none;
+  box-shadow:0 2px 8px rgba(0,0,0,.5);
+}
+.bar:hover .bar__knob,.bar.is-grabbing .bar__knob{transform:translate(-50%,-50%) scale(1)}
+
+.extras{display:flex;align-items:center;justify-content:flex-end;gap:8px}
+.vol{display:flex;align-items:center;gap:8px;width:130px}
+.vol .bar{height:14px}
+
+/* ── Всплывашки ──────────────────────────────────────────────────── */
+.toasts{
+  position:fixed;left:50%;bottom:calc(var(--player-h) + 22px + var(--safe-b));
+  transform:translateX(-50%);z-index:60;
+  display:grid;gap:8px;justify-items:center;pointer-events:none;
+}
+.toast{
+  padding:11px 18px;border-radius:999px;font-size:13.5px;
+  background:rgba(20,19,18,.92);border:1px solid var(--glass-line);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  box-shadow:0 8px 28px rgba(0,0,0,.45);
+  animation:rise .28s ease both;
+}
+.toast--err{border-color:rgba(207,101,88,.5);color:#F2C0B8}
+
+/* ── Значки и мелкие кнопки ──────────────────────────────────────── */
+.ico{display:inline-flex;flex:none}
+.ico svg{width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:1.9;
+  stroke-linecap:round;stroke-linejoin:round}
+.btn .ico{font-size:17px}
+.navlink .ico{font-size:19px}
+.ctl .ico,.iconbtn .ico{font-size:19px}
+
+.iconbtn{
+  display:grid;place-items:center;width:30px;height:30px;border-radius:50%;
+  color:var(--muted);flex:none;
+  transition:color .15s,background .15s,transform .12s,opacity .15s;
+}
+.iconbtn .ico{font-size:17px}
+.iconbtn:hover{color:var(--text);background:rgba(240,238,230,.09)}
+.iconbtn:active{transform:scale(.9)}
+.iconbtn:disabled{opacity:.3;cursor:default}
+.iconbtn:disabled:hover{background:none;color:var(--muted)}
+.iconbtn svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.9;
+  stroke-linecap:round;stroke-linejoin:round}
+/* Кнопка в строке трека — проявляется только при наведении, иначе
+   список превращается в частокол одинаковых плюсов. */
+.iconbtn--row{opacity:0}
+.row:hover .iconbtn--row,.iconbtn--row:focus-visible{opacity:1}
+
+/* ── Верхняя полоса ──────────────────────────────────────────────── */
+.topbar{
+  display:flex;align-items:center;gap:12px;flex:none;
+  padding:12px 20px;border-bottom:1px solid var(--glass-line);
+}
+.topbar__nav{display:flex;gap:4px;flex:none}
+.topbar__end{margin-left:auto;flex:none}
+
+.search{
+  display:flex;align-items:center;gap:9px;flex:1;max-width:420px;
+  padding:8px 12px;border-radius:999px;
+  background:rgba(240,238,230,.07);border:1px solid var(--glass-line);
+  transition:border-color .15s,background .15s;
+}
+.search:focus-within{border-color:var(--accent);background:rgba(240,238,230,.1)}
+.search>svg{width:17px;height:17px;flex:none;fill:none;stroke:var(--muted);
+  stroke-width:1.9;stroke-linecap:round}
+.search input{
+  flex:1;min-width:0;background:none;border:0;outline:none;font-size:14px;
+}
+.search input::placeholder{color:var(--faint)}
+.search input::-webkit-search-cancel-button{display:none}
+
+/* ── Страница ────────────────────────────────────────────────────── */
+.page{padding:26px 32px 8px}
+.page--flush{padding:0}
+.page__title{margin:0 0 6px;font-size:clamp(24px,3.4vw,34px);font-weight:700;letter-spacing:-.025em}
+.page__sub{margin:0 0 22px;color:var(--muted);font-size:14px}
+
+.sec{display:flex;align-items:baseline;gap:14px;margin:30px 0 12px;padding:0 12px}
+.sec--top{margin:0 0 22px;padding:0;align-items:center}
+.sec__t{margin:0;font-size:19px;font-weight:650;letter-spacing:-.02em}
+.sec__t--solo{margin:26px 0 10px;font-size:16px}
+.sec__more{
+  margin-left:auto;font-size:12.5px;font-weight:600;color:var(--muted);
+  letter-spacing:.03em;transition:color .15s;
+}
+.sec__more:hover{color:var(--text);text-decoration:underline}
+
+/* ── Плитки быстрого доступа ─────────────────────────────────────── */
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-bottom:8px}
+.tile{
+  display:flex;align-items:center;gap:12px;overflow:hidden;
+  border-radius:var(--r-sm);background:rgba(240,238,230,.07);
+  transition:background .15s,transform .12s;text-align:left;
+}
+.tile:hover{background:rgba(240,238,230,.13)}
+.tile:active{transform:scale(.99)}
+.tile__art{width:54px;height:54px;flex:none;display:grid;place-items:center}
+.tile__art svg{width:22px;height:22px;fill:none;stroke:#1a1210;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round}
+.tile__t{font-weight:600;font-size:14px;padding-right:12px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ── Карточки плейлистов ─────────────────────────────────────────── */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:16px;padding:0 12px}
+.card{
+  padding:14px;border-radius:var(--r-md);text-align:left;
+  background:rgba(240,238,230,.05);transition:background .18s,transform .14s;
+}
+.card:hover{background:rgba(240,238,230,.1)}
+.card:active{transform:scale(.985)}
+.card__art{
+  aspect-ratio:1;border-radius:var(--r-sm);margin-bottom:12px;
+  display:grid;place-items:center;box-shadow:0 8px 22px rgba(0,0,0,.4);
+}
+.card__art svg{width:34px;height:34px;fill:none;stroke:#1a1210;stroke-width:1.6;
+  stroke-linecap:round;stroke-linejoin:round}
+.card__title{font-weight:600;font-size:14.5px;margin-bottom:3px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card__meta{color:var(--muted);font-size:12.5px}
+
+/* Каждой сцене — своя обложка. Цвета взяты из самих сцен (bg.js),
+   чтобы карточка заранее показывала, какой фон включится. */
+.tile__art--meadow,.card__art--meadow,.hero__art--meadow{background:linear-gradient(160deg,#1E7BF0,#5C9E2B)}
+.tile__art--sunset,.card__art--sunset,.hero__art--sunset{background:linear-gradient(160deg,#E86A3C,#8E7A2B)}
+.tile__art--night, .card__art--night, .hero__art--night {background:linear-gradient(160deg,#0E1A38,#2E5E44)}
+.tile__art--deep,  .card__art--deep,  .hero__art--deep  {background:linear-gradient(160deg,#005980,#00121C)}
+
+/* ── Выбор фона в плейлисте ──────────────────────────────────────── */
+.scenes{display:flex;gap:8px;margin-top:14px}
+.scene{
+  width:30px;height:30px;border-radius:9px;flex:none;
+  border:2px solid transparent;transition:transform .14s,border-color .15s;
+}
+.scene:hover{transform:scale(1.12)}
+.scene.is-on{border-color:var(--text)}
+.scene--meadow{background:linear-gradient(160deg,#1E7BF0,#5C9E2B)}
+.scene--sunset{background:linear-gradient(160deg,#E86A3C,#8E7A2B)}
+.scene--night {background:linear-gradient(160deg,#0E1A38,#2E5E44)}
+.scene--deep  {background:linear-gradient(160deg,#005980,#00121C)}
+
+/* ── Заметка ─────────────────────────────────────────────────────── */
+.note{
+  display:flex;gap:14px;align-items:flex-start;max-width:640px;
+  padding:16px 18px;border-radius:var(--r-md);
+  background:rgba(240,238,230,.05);border:1px solid var(--glass-line);
+}
+.note__ico{flex:none;color:var(--accent);font-size:22px}
+.note__ico svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round}
+.note__t{font-weight:600;margin-bottom:4px;font-size:14.5px}
+.note__d{color:var(--muted);font-size:13.5px;line-height:1.5}
+
+/* ── Меню «в плейлист» ───────────────────────────────────────────── */
+.menu{
+  position:fixed;z-index:70;min-width:210px;max-height:60vh;overflow-y:auto;
+  padding:6px;border-radius:var(--r-md);
+  background:rgba(22,21,20,.96);border:1px solid var(--glass-line);
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  box-shadow:0 14px 40px rgba(0,0,0,.55);
+  animation:rise .16s ease both;
+}
+.menu__label{padding:7px 12px 8px;font-size:11.5px;font-weight:600;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+.menu__item{
+  display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  padding:9px 12px;border-radius:var(--r-sm);font-size:14px;
+  transition:background .12s;
+}
+.menu__item .ico{font-size:17px;color:var(--muted)}
+.menu__item:hover{background:rgba(240,238,230,.09)}
+
+/* ── Правки к существующему ──────────────────────────────────────── */
+.side__brand{width:100%;text-align:left}
+.side__head{display:flex;align-items:center;gap:8px;padding:0 12px 8px 18px}
+.side__head .side__label{padding:0;flex:1}
+.hero__body{min-width:0}
+.btn--sm{padding:8px 15px;font-size:13.5px}
+.btn--sm .ico{font-size:15px}
+.btn--danger{color:var(--danger)}
+.btn--danger:hover{background:rgba(207,101,88,.14)}
+.toolbar{flex-wrap:wrap}
+.tabs{display:none}
+
+/* ── Телефон ─────────────────────────────────────────────────────── */
+@media (max-width:860px){
+  .app{
+    grid-template-columns:1fr;
+    grid-template-rows:1fr auto auto;
+    grid-template-areas:"main" "player" "tabs";
+    gap:6px;padding:6px;
+  }
+  .side{display:none}
+
+  /* Боковой колонки на телефоне нет, поэтому навигация переезжает вниз —
+     туда, куда дотягивается большой палец. */
+  .tabs{
+    grid-area:tabs;display:grid;grid-template-columns:repeat(4,1fr);
+    gap:2px;padding:4px;
+  }
+  .tab{
+    display:grid;justify-items:center;gap:3px;padding:8px 2px;
+    border-radius:var(--r-sm);color:var(--muted);
+    font-size:10.5px;font-weight:600;transition:color .15s,background .15s;
+  }
+  .tab svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;
+    stroke-linecap:round;stroke-linejoin:round}
+  .tab.is-active{color:var(--accent)}
+  .tab:active{background:rgba(240,238,230,.07)}
+
+  .topbar{padding:8px 12px;gap:8px}
+  .topbar__end{display:none}
+  .search{max-width:none}
+  .page{padding:18px 16px 8px}
+  .tiles{grid-template-columns:1fr 1fr}
+  .tile__art{width:46px;height:46px}
+  .tile__t{font-size:13px}
+  .cards{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;padding:0}
+  .sec{padding:0 4px}
+  .hero{padding:24px 18px 18px;flex-direction:column;align-items:flex-start;gap:16px}
+  .hero__art{width:132px;height:132px}
+  .toolbar{padding:0 18px 14px}
+  .tracks{padding:0 8px}
+  .tracks__head{display:none}
+  .row,.tracks__head{grid-template-columns:1fr 52px}
+  .row__num,.row__album{display:none}
+  .player{
+    grid-template-columns:1fr auto;gap:10px;padding:10px 12px;
+    --player-h:auto;
+  }
+  .transport{grid-column:1 / -1;order:3;width:100%}
+  .extras{display:none}
+  .np__art{width:46px;height:46px}
+}
+
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms !important;transition-duration:.01ms !important}
+}
