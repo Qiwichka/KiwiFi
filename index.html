@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KiwiFi — музыка, которая твоя</title>
+<meta name="description" content="Плеер со своими треками, облаком и SoundCloud. Живой фон, плейлисты со своим настроением.">
+<meta name="theme-color" content="#1E7BF0">
+<link rel="stylesheet" href="assets/css/landing.css">
+</head>
+<body>
+
+<!-- Небо из saittest. На витрине идёт одно, без травы: тут крупный текст
+     и воздух важнее, чем плотная картинка. -->
+<div class="bg" id="bg">
+    <canvas class="bg__canvas" id="sky"></canvas>
+</div>
+
+<div class="wrap">
+
+    <header class="brand">
+        <svg viewBox="0 0 24 24">
+            <path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>
+        </svg>
+        KiwiFi
+    </header>
+
+    <main class="hero">
+        <h1>Музыка,<br>которая твоя</h1>
+        <p>
+            Свои треки с диска, облако и SoundCloud в одном плеере.
+            Без подписки, без чужих рекомендаций и без рекламы посреди песни.
+        </p>
+        <div class="cta">
+            <a class="btn btn--go" href="app.html">
+                <svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>
+                Открыть плеер
+            </a>
+            <a class="btn btn--ghost" href="https://github.com/Qiwichka/KiwiFi" rel="noopener">
+                <svg viewBox="0 0 24 24"><path d="M12 3l7 4v10l-7 4-7-4V7z"/><path d="M12 11v10M5 7l7 4 7-4"/></svg>
+                Скачать на Android
+            </a>
+        </div>
+    </main>
+
+    <section class="facts">
+        <div class="fact">
+            <div class="fact__t">Твои файлы</div>
+            <div class="fact__d">Кидаешь mp3 прямо в окно — и они играют. Ничего никуда не заливается.</div>
+        </div>
+        <div class="fact">
+            <div class="fact__t">Плейлисты с настроением</div>
+            <div class="fact__d">У каждого свой живой фон: луг, закат, ночь или глубина.</div>
+        </div>
+        <div class="fact">
+            <div class="fact__t">SoundCloud рядом</div>
+            <div class="fact__d">Треки оттуда встают в общую очередь вместе со своими.</div>
+        </div>
+    </section>
+
+</div>
+
+<script type="module" src="assets/js/landing.js"></script>
+</body>
+</html>

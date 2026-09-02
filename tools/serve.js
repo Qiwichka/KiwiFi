@@ -1,7 +1,7 @@
 /*
  * serve.js — крошечный сервер для проверки на своей машине.
  *   node tools/serve.js
- * потом открыть http://localhost:5180/app.html
+ * потом открыть http://localhost:5180/
  *
  * Нужен потому, что app.html подключает скрипты как модули, а модули по
  * протоколу file:// браузер запрещает. То есть двойным кликом приложение
@@ -95,7 +95,7 @@ function sendRange(req, res, file, stat, type) {
 
 const server = http.createServer((req, res) => {
     let rel = decodeURIComponent(req.url.split("?")[0])
-    if (rel === "/") rel = "/app.html"
+    if (rel === "/") rel = "/index.html"   // витрина; плеер живёт в /app.html
 
     /* Приёмник сообщений со страницы. Нужен для отладки в браузере, который
      * нельзя расспросить напрямую: страница шлёт сюда, что с ней происходит,
@@ -163,6 +163,7 @@ server.on("error", (err) => {
 })
 
 server.listen(PORT, () => {
-    console.log(`KiwiFi: http://localhost:${PORT}/app.html`)
+    console.log(`KiwiFi:  http://localhost:${PORT}/`)
+    console.log(`плеер:   http://localhost:${PORT}/app.html`)
     console.log("остановить — Ctrl+C")
 })
