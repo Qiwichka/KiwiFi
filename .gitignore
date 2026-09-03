@@ -1,5 +1,6 @@
 node_modules/
 www/
+CLAUDE.md
 tools/_*.log
 *.jks
 *.keystore
