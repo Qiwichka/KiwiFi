@@ -149,15 +149,23 @@
         <div class="main__scroll" id="view"></div>
     </main>
 
-    <!-- ══ Плеер ════════════════════════════════════════════════════ -->
-    <footer class="player panel">
+    <!-- ══ Плеер ════════════════════════════════════════════════════
+         На телефоне это узкая плашка (art + название + play + next).
+         Тап по ней раскрывает те же самые элементы на весь экран —
+         никакого второго набора controls: класс is-expanded просто
+         меняет им раскладку через CSS. -->
+    <footer class="player panel" id="player">
         <!-- Спектр. Рисуется под содержимым панели и не ловит клики.
              Для источников без анализа (SoundCloud) показывает
              спокойную волну вместо замершего нуля — иначе выглядит
              сломанным. -->
         <canvas class="viz" id="viz" aria-hidden="true"></canvas>
 
-        <div class="np">
+        <button class="player__close" id="btn-collapse" title="Свернуть">
+            <svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>
+        </button>
+
+        <div class="np" id="np">
             <div class="np__art" id="np-art">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
                      stroke-linecap="round" stroke-linejoin="round">

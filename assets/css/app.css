@@ -278,6 +278,17 @@ body.is-dragging .empty{border-color:var(--accent);background:var(--accent-dim)}
 }
 .np,.transport,.extras{position:relative;z-index:1}
 .np{display:flex;align-items:center;gap:13px;min-width:0}
+
+/* Свёрнуть полноэкранный плеер. На компьютере не показывается вовсе —
+   там плашка никогда не разворачивается. */
+.player__close{
+  display:none;position:absolute;top:calc(10px + var(--safe-t));left:50%;
+  transform:translateX(-50%);z-index:2;
+  width:38px;height:38px;border-radius:50%;color:var(--muted);
+  align-items:center;justify-content:center;background:rgba(240,238,230,.08);
+}
+.player__close svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
 .np__art{
   width:58px;height:58px;flex:none;border-radius:var(--r-sm);object-fit:cover;
   background:var(--surface-3);display:grid;place-items:center;cursor:pointer;
@@ -370,6 +381,10 @@ body.is-dragging .empty{border-color:var(--accent);background:var(--accent-dim)}
    список превращается в частокол одинаковых плюсов. */
 .iconbtn--row{opacity:0}
 .row:hover .iconbtn--row,.iconbtn--row:focus-visible{opacity:1}
+/* Отмеченное сердечко остаётся видно без наведения — на телефоне
+   ховера нет вовсе, и иначе избранное было бы не отличить на глаз. */
+.iconbtn--fav.is-on{opacity:1;color:var(--accent)}
+.iconbtn--fav.is-on svg{fill:currentColor}
 
 /* ── Верхняя полоса ──────────────────────────────────────────────── */
 .topbar{
@@ -548,13 +563,53 @@ body.is-dragging .empty{border-color:var(--accent);background:var(--accent-dim)}
   .tracks__head{display:none}
   .row,.tracks__head{grid-template-columns:1fr 52px}
   .row__num,.row__album{display:none}
+  /* Свёрнутый плеер — узкая плашка: обложка, название, play, next.
+     Остальные кнопки и полоса прогресса просто спрятаны — они те же
+     самые узлы, что и в развёрнутом виде, см. .is-expanded ниже. */
   .player{
-    grid-template-columns:1fr auto;gap:10px;padding:10px 12px;
+    grid-template-columns:1fr auto;gap:10px;padding:9px 14px;
     --player-h:auto;
   }
-  .transport{grid-column:1 / -1;order:3;width:100%}
+  .np{cursor:pointer}
+  .transport{grid-column:auto;order:0;width:auto;gap:0}
+  .transport__btns{gap:4px}
+  #btn-shuffle,#btn-prev,#btn-repeat,.seek{display:none}
   .extras{display:none}
-  .np__art{width:46px;height:46px}
+  .np__art{width:44px;height:44px}
+  .ctl--play{width:38px;height:38px}
+  .ctl--play svg{width:15px;height:15px}
+
+  /* Развёрнутый плеер. Второй набор controls нигде не заводится — те же
+     самые узлы (play, seek, обложка) просто переезжают в раскладку на
+     весь экран через эти правила. */
+  .player.is-expanded{
+    position:fixed;inset:0;z-index:75;border-radius:0;
+    display:flex;flex-direction:column;align-items:center;
+    padding:calc(56px + var(--safe-t)) 26px calc(22px + var(--safe-b));
+    animation:rise .22s ease both;
+  }
+  .player.is-expanded .player__close{display:flex}
+  .player.is-expanded .np{
+    flex-direction:column;text-align:center;gap:20px;
+    margin-top:auto;cursor:default;
+  }
+  .player.is-expanded .np__art{
+    width:min(66vw,280px);height:min(66vw,280px);border-radius:var(--r-lg);
+  }
+  .player.is-expanded .np__title{font-size:21px;white-space:normal}
+  .player.is-expanded .np__artist{font-size:14.5px}
+  .player.is-expanded .transport{
+    width:100%;margin-bottom:auto;display:grid;gap:18px;order:0;
+  }
+  .player.is-expanded .transport__btns{gap:26px}
+  .player.is-expanded #btn-shuffle,
+  .player.is-expanded #btn-prev,
+  .player.is-expanded #btn-repeat,
+  .player.is-expanded .seek{display:flex}
+  .player.is-expanded .ctl{width:42px;height:42px}
+  .player.is-expanded .ctl--play{width:60px;height:60px}
+  .player.is-expanded .ctl--play svg{width:22px;height:22px}
+  .player.is-expanded .extras{display:flex;width:100%;justify-content:center;gap:22px}
 }
 
 @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}

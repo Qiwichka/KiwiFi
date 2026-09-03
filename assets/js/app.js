@@ -114,7 +114,9 @@ const I = {
     trash:  '<svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>',
     list:   '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h4"/></svg>',
     wave:   '<svg viewBox="0 0 24 24"><path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 11v2M21 12h1"/></svg>',
-    dl:     '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>'
+    dl:     '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>',
+    heart:  '<svg viewBox="0 0 24 24"><path d="M12 21s-7.2-4.7-9.8-9.3C.6 8.1 2 4.6 5.5 4c2.4-.4 4.4.9 6.5 3 2.1-2.1 4.1-3.4 6.5-3 3.5.6 4.9 4.1 3.3 7.7C19.2 16.3 12 21 12 21z"/></svg>',
+    chev:   '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>'
 }
 
 const SRC_ICON = { local: I.disk, cloud: I.cloud, soundcloud: I.sc, audius: I.wave }
@@ -127,6 +129,7 @@ const P = prefs.load()
 const state = {
     tracks: [],        // вся библиотека
     playlists: [],     // { id, title, scene, keys: [ключи треков] }
+    favorites: [],     // ключи треков, отмеченных сердечком
     folder: null,      // сохранённая папка с музыкой (уровень 1)
     needPermission: false,   // доступ к файлам надо переспросить кликом
 
@@ -177,6 +180,7 @@ function persistLater() {
         try {
             await idb.bulkPut("tracks", state.tracks.map((t) => [t.key, forDisk(t)]))
             await idb.put("playlists", "all", state.playlists)
+            await idb.put("playlists", "favorites", state.favorites)
             if (state.folder) await idb.put("playlists", "folder", state.folder)
         } catch (e) {
             toast("Не удалось сохранить библиотеку", true)
@@ -232,7 +236,8 @@ function render() {
 
     const draw = {
         home: viewHome, search: viewSearch, library: viewLibrary,
-        playlists: viewPlaylists, playlist: viewPlaylist, queue: viewQueue
+        playlists: viewPlaylists, playlist: viewPlaylist, queue: viewQueue,
+        favorites: viewFavorites
     }[state.view] || viewHome
 
     if (state.needPermission) v.appendChild(permBanner())
@@ -327,8 +332,34 @@ function trackRow(t, i, list, from) {
                 class: "iconbtn iconbtn--row", title: "В плейлист", "data-stop": true,
                 onclick: (e) => { e.stopPropagation(); menuAddTo(e.currentTarget, t) }
             }, svg(I.plus)),
+            favBtn(t),
             el("span", { class: "src", title: SRC_NAME[t.source] || "", html: SRC_ICON[t.source] || I.disk }),
             el("span", { class: "row__time", text: t.durationS ? fmt(t.durationS) : "—" })))
+}
+
+/* Сердечко избранного. Отдельная кнопка вместо переиспользования
+   iconbtn--row как есть: она обязана быть видна и без наведения, если
+   трек уже в избранном, иначе с телефона (там hover не работает вовсе)
+   было бы не понять, что уже отмечено. */
+function favBtn(t) {
+    const on = state.favorites.includes(t.key)
+    return el("button", {
+        class: "iconbtn iconbtn--row iconbtn--fav" + (on ? " is-on" : ""),
+        title: on ? "Убрать из избранного" : "В избранное",
+        "data-stop": true,
+        onclick: (e) => { e.stopPropagation(); toggleFav(t, e.currentTarget) }
+    }, svg(I.heart))
+}
+
+function toggleFav(t, btn) {
+    const had = state.favorites.includes(t.key)
+    state.favorites = had ? state.favorites.filter((k) => k !== t.key) : [...state.favorites, t.key]
+    persistLater()
+    btn.classList.toggle("is-on", !had)
+    btn.title = had ? "В избранное" : "Убрать из избранного"
+    // Экран «Избранное» — единственное место, где список меняет состав
+    // от этого клика, поэтому только там нужна полная перерисовка.
+    if (state.view === "favorites") render()
 }
 
 function trackTable(list, from) {
@@ -364,6 +395,9 @@ function viewHome() {
         el("button", { class: "tile", onclick: () => go("library") },
             el("span", { class: "tile__art tile__art--meadow", html: I.note }),
             el("span", { class: "tile__t", text: "Все треки" })),
+        el("button", { class: "tile", onclick: () => go("favorites") },
+            el("span", { class: "tile__art tile__art--sunset", html: I.heart }),
+            el("span", { class: "tile__t", text: "Избранное" })),
         ...state.playlists.slice(0, 5).map((p) =>
             el("button", { class: "tile", onclick: () => go("playlist", p.id) },
                 el("span", { class: "tile__art tile__art--" + p.scene, html: I.list }),
@@ -557,6 +591,22 @@ function viewLibrary() {
     return box
 }
 
+/* ── Экран: Избранное ────────────────────────────────────────────── */
+
+function viewFavorites() {
+    const list = state.favorites.map(byKey).filter(Boolean)
+    const box = el("div", { class: "page page--flush" })
+    box.appendChild(hero({
+        kind: "Избранное", title: "Избранное", art: "sunset",
+        meta: list.length ? nTracks(list.length) : "пока пусто"
+    }))
+    if (list.length) box.appendChild(toolbar(list, "Избранное"))
+    box.appendChild(list.length
+        ? trackTable(list, "Избранное")
+        : emptyBox("Здесь пока пусто", "Нажми на сердечко у трека, чтобы добавить его сюда", null))
+    return box
+}
+
 /* ── Экран: Плейлисты ────────────────────────────────────────────── */
 
 function viewPlaylists() {
@@ -692,6 +742,10 @@ function renderSidePlaylists() {
         class: "navlink" + (state.view === "library" ? " is-active" : ""),
         onclick: () => go("library")
     }, svg(I.note), "Все треки"))
+    box.appendChild(el("button", {
+        class: "navlink" + (state.view === "favorites" ? " is-active" : ""),
+        onclick: () => go("favorites")
+    }, svg(I.heart), "Избранное"))
 
     for (const p of state.playlists) {
         box.appendChild(el("button", {
@@ -1130,8 +1184,16 @@ $("btn-mute").addEventListener("click", () => {
     paintMute()
 })
 
-$("np-art").addEventListener("click", () => {
-    if (engine.track) toast("Полноэкранный режим будет в фазе 6")
+/* На телефоне плеер — узкая плашка, тап по ней раскрывает её же на весь
+   экран через is-expanded (см. app.css). На компьютере класс ничего не
+   меняет: там всё и так видно, переключать нечего. */
+function togglePlayer(v) {
+    $("player").classList.toggle("is-expanded", v)
+}
+$("np").addEventListener("click", () => togglePlayer())
+$("btn-collapse").addEventListener("click", () => togglePlayer(false))
+window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") togglePlayer(false)
 })
 
 const q = $("q")
@@ -1256,6 +1318,9 @@ async function restore() {
 
         const pls = await idb.get("playlists", "all")
         if (Array.isArray(pls)) state.playlists = pls
+
+        const favs = await idb.get("playlists", "favorites")
+        if (Array.isArray(favs)) state.favorites = favs
 
         state.folder = (await idb.get("playlists", "folder")) || null
 
